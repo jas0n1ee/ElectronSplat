@@ -1,0 +1,48 @@
+{
+  "name": "electronsplat",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check": "tsc --noEmit",
+    "test": "node --test tests/*.test.mjs",
+    "build:desktop": "node scripts/build-desktop.mjs",
+    "start": "npm run build:desktop && electron .build/electron",
+    "package:desktop": "npm run build:desktop && node scripts/package-desktop.mjs",
+    "test:desktop": "node tests/desktop.mjs",
+    "test:conversion-gpu": "node tests/conversion-gpu.mjs",
+    "test:portability": "node tests/platform-portability.mjs",
+    "transfer:mac": "node scripts/package-mac-transfer.mjs",
+    "transfer:win": "node scripts/package-windows-transfer.mjs",
+    "icons": "node scripts/build-icons.mjs",
+    "test:large": "node tests/large-file.mjs",
+    "test:package": "node tests/desktop-package.mjs",
+    "test:startup": "node tests/conversion-startup.mjs",
+    "test:batch": "node tests/conversion-batch.mjs",
+    "test:rename": "node tests/scene-rename.mjs"
+  },
+  "dependencies": {
+    "@playcanvas/splat-transform": "3.4.2",
+    "playcanvas": "2.22.2"
+  },
+  "devDependencies": {
+    "@electron/packager": "20.3.0",
+    "@playwright/test": "1.63.0",
+    "@types/node": "26.5.1",
+    "electron": "44.3.0",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
+  },
+  "license": "MIT",
+  "author": "Jason Li <i@jas0n1ee.me>",
+  "description": "Offline 3D Gaussian Splatting viewer and converter",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jas0n1ee/ElectronSplat.git"
+  },
+  "homepage": "https://github.com/jas0n1ee/ElectronSplat",
+  "bugs": {
+    "url": "https://github.com/jas0n1ee/ElectronSplat/issues"
+  }
+}

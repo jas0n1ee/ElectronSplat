@@ -1,0 +1,26 @@
+# Dependencies, generated applications, builds, and local tools
+/node_modules/
+/.build/
+/.tools/
+/portable/
+/desktop-dist/
+/desktop-transfer/
+/releases/
+/dest/
+
+# Local scenes, diagnostics, and hardware-specific test evidence
+/test-results/
+/logs/
+/docs/compatibility.json
+/docs/sh-audit-*.json
+**/.portable-profile/
+*.log
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# Internal planning, discussions, research and acceptance records
+/goal.md
+/TEST_REPORT.md
+/docs/

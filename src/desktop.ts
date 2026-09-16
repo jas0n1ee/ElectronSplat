@@ -1,0 +1,32 @@
+import { validateManifest, safePath } from './manifest';
+import type { SceneManifest, SceneRecord, CameraPose } from './types';
+
+export type DiskScene = { token: string; manifest: SceneManifest; resourceSizes: Record<string,number>; revision: string };
+type DesktopAPI = {
+  scan: () => Promise<{scenes: DiskScene[]; errors: {folder:string;message:string}[]; directory:string; directories:string[]}>;
+  setQueueLength: (count:number) => Promise<void>;
+  info: () => Promise<unknown>;
+  openSceneFolder: (token:string) => Promise<void>;
+  renameScene: (token:string,name:string) => Promise<DiskScene>;
+  deleteScene: (token:string) => Promise<boolean>;
+  readWork: (token:string,path:string,start:number,end:number) => Promise<Uint8Array>;
+  begin: (id:string) => Promise<string>;
+  write: (token:string,path:string,bytes:Uint8Array) => Promise<void>;
+  commit: (token:string,manifest:SceneManifest) => Promise<DiskScene>;
+  abort: (token:string) => Promise<void>;
+  saveCover: (token:string,bytes:Uint8Array,pose:CameraPose) => Promise<DiskScene>;
+};
+declare global { interface Window { portableDesktop?: DesktopAPI } }
+export const desktop = window.portableDesktop;
+export function diskScene(entry:DiskScene):SceneRecord {
+  const manifest = validateManifest(entry.manifest);
+  if (!/^[a-f0-9]{32}$/.test(entry.token)) throw new Error('磁盘场景标识无效。');
+  const url = (path:string) => `portable://app/scene/${entry.token}/${safePath(path).split('/').map(encodeURIComponent).join('/')}`;
+  return { manifest, files:new Map(), saved:true, nativeToken:entry.token, resourceSizes:entry.resourceSizes,
+    assetUrl:url, sourceCoverUrl:url(manifest.cover), loadFile:async path => {
+      const response=await fetch(url(path),{cache:'no-store'});
+      if(!response.ok)throw new Error(`本地文件无法读取：${path}`);
+      return response.blob();
+    }
+  };
+}

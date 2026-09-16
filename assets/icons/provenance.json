@@ -1,0 +1,22 @@
+{
+  "sourceFile": "source.png",
+  "sourceSha256": "f800b73fa17cfe3bcd7fdff815b770fed529b145e69714fe4086b64657fa3f02",
+  "sourceSize": {
+    "width": 1254,
+    "height": 1254
+  },
+  "sourceTransparentPixels": 1093741,
+  "masterSize": 1024,
+  "icoSizes": [
+    16,
+    20,
+    24,
+    32,
+    40,
+    48,
+    64,
+    128,
+    256
+  ],
+  "method": "Electron nativeImage.resize best; proportional downscaling, original margins and alpha retained; PNG payloads in ICO/ICNS"
+}

@@ -29,7 +29,7 @@ ElectronSplat/
 
 Copy complete scene folders into `scenes/` to add them to the library. LOD budgets range from 3M to 9M splats. Conversion uses official PlayCanvas streamed LOD/SOG (SH0) and voxel collision formats.
 
-0.1.0 的二进制未签名，macOS 包未公证。后续 macOS Release 以 Developer ID 签名、公证和 staple 验证为发布条件；每个版本的实际验收情况见 Release 说明。Windows 包目前未签名。
+Version 0.1.0 is unsigned and its macOS app is not notarized. New macOS release candidates must pass Developer ID signing, notarization, and stapling before publication. Windows builds are unsigned.
 
 ## Development
 

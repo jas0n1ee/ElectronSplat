@@ -22,8 +22,8 @@ fi
 "$portable_root/portable-runtime" --disable-setuid-sandbox "$@"
 portable_status=$?
 if [ "$portable_status" -ne 0 ]; then
-  portable_message='Portable 无法启动。此 Linux 系统可能限制 Chromium 沙箱。需要已正确安装的 Chrome 沙箱组件，或由管理员配置应用沙箱；详情请查看终端错误。'
+  portable_message='ElectronSplat 无法启动。此 Linux 系统可能限制 Chromium 沙箱。需要已正确安装的 Chrome 沙箱组件，或由管理员配置应用沙箱；详情请查看终端错误。'
   printf '%s\n' "$portable_message" >&2
-  if command -v zenity >/dev/null 2>&1; then zenity --error --title='Portable 启动失败' --text="$portable_message"; fi
+  if command -v zenity >/dev/null 2>&1; then zenity --error --title='ElectronSplat 启动失败' --text="$portable_message"; fi
 fi
 exit "$portable_status"

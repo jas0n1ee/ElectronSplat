@@ -13,16 +13,29 @@ import { auditRuntimeLinks } from './runtime-copy.mjs';
 const arch = process.argv[2] || 'arm64';
 if (arch !== 'arm64') throw new Error('Intel Mac is no longer supported. Use arm64.');
 const run = promisify(execFile);
-const name = `Portable-3DGS-Viewer-darwin-${arch}`;
+const signedRelease = !process.argv.includes('--allow-unsigned');
+assert.ok(signedRelease || !process.argv.includes('--signed-release'), 'Choose signed release or unsigned transport, not both');
+async function verifyRelease(app) {
+  if (!signedRelease) return;
+  assert.equal(process.platform, 'darwin', 'Signed release archives must be verified on macOS');
+  await run('codesign', ['--verify', '--deep', '--strict', '--all-architectures', app]);
+  const signature = await run('codesign', ['-dv', '--verbose=4', app]);
+  assert.match(signature.stderr, /Authority=Developer ID Application:/);
+  const assessment = await run('spctl', ['-a', '-vv', app]);
+  assert.match(assessment.stderr, /source=Notarized Developer ID/);
+  await run('xcrun', ['stapler', 'validate', app]);
+}
+const name = `ElectronSplat-darwin-${arch}`;
 const source = resolve('desktop-dist', name);
-const appName = 'Portable-3DGS-Viewer.app';
+const appName = 'ElectronSplat.app';
 const sourceApp = join(source, appName);
+await verifyRelease(sourceApp);
 const sourceLinks = await auditRuntimeLinks(sourceApp);
 assert.equal(sourceLinks.length, 14);
 const output = resolve('desktop-transfer');
 await mkdir(output, { recursive: true });
 const { version } = JSON.parse(await readFile('package.json', 'utf8'));
-const archiveName = `ElectronSplat-${version}-mac-arm64.zip`;
+const archiveName = `ElectronSplat-${version}-mac-arm64${signedRelease ? '' : '-unsigned'}.zip`;
 const archive = join(output, archiveName);
 const incoming = join(output, `.incoming-${randomUUID()}.zip`);
 const temporary = await mkdtemp(join(tmpdir(), 'portable-mac-transfer-'));
@@ -34,10 +47,11 @@ try {
   const moved = join(temporary, 'Mac 中文 空格');
   await rename(unpacked, moved);
   const extractedApp = join(moved, appName);
+  await verifyRelease(extractedApp);
   const links = await auditRuntimeLinks(extractedApp);
   assert.deepEqual(links.sort((a,b)=>a.path.localeCompare(b.path)), sourceLinks.sort((a,b)=>a.path.localeCompare(b.path)));
   const files = [
-    'Contents/MacOS/Portable-3DGS-Viewer',
+    'Contents/MacOS/ElectronSplat',
     'Contents/Frameworks/Electron Framework.framework/Electron Framework',
     'Contents/Resources/app.asar'
   ];
@@ -48,7 +62,7 @@ try {
   const sha256 = await digest(incoming);
   await rename(incoming, archive);
   await writeFile(`${archive}.sha256`, `${sha256}  ${archiveName}\n`);
-  const result = { archive, sha256, bytes: (await stat(archive)).size, layout:[appName,'scenes/'], linkCount: links.length, relocatedResourcesReadable: true, executableModesPreserved: true, nativeExecution: 'Not run; requires a Mac.' };
+  const result = { archive, sha256, bytes: (await stat(archive)).size, layout:[appName,'scenes/'], linkCount: links.length, relocatedResourcesReadable: true, executableModesPreserved: true, signedReleaseVerified: signedRelease, nativeExecution: 'Not run by this archive-only command.' };
   await mkdir('test-results/platform-portability', { recursive: true });
   await writeFile(`test-results/platform-portability/mac-${arch}-transfer.json`, JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result, null, 2));

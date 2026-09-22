@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Hardened runtime blocks writable-executable memory, which V8 needs for JIT. Without these two
+	     the app aborts on launch. -->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+	<true/>
+
+	<!-- Deliberately NOT included:
+	     com.apple.security.cs.disable-library-validation
+	     Every binary in this bundle is re-signed with the same identity (see scripts/sign-macos.mjs), so
+	     library validation is satisfied by construction, and the bundled node that spawns the conversion
+	     child already loads the ad-hoc-signed dawn.node today, which means its own signature has library
+	     validation disabled. Revisit this file if a future nested binary arrives signed by another team.
+
+	     Also absent: Electron's built-in default set carries com.apple.security.device.{camera,microphone,
+	     bluetooth,usb,print} plus location and photos. This app is an offline viewer and asks for none of
+	     them; signing with entitlements it never uses is a permission it would not otherwise have. -->
+</dict>
+</plist>

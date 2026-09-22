@@ -7,8 +7,8 @@ import { loadCollision } from './collision';
 import { log } from './log';
 import { readSceneFile } from './files';
 import { displayRotation, rotatePoint } from './coordinates';
-import { LOD_BUDGETS } from './lod';
 import { createViewerDevice } from './graphics';
+import { moveDelta } from './movement';
 
 type StreamResource={octree:{environmentUrl?:string|null;lodLevels:number;files:{url:string;lodLevel:number}[];fileResources:Map<number,unknown>;nodes:{lods:{fileIndex:number}[]}[];assetLoader:{hasFailed?:(url:string)=>boolean}|null}};
 type Loaded = {asset:pc.Asset;entity:pc.Entity;levels:number};
@@ -53,7 +53,7 @@ export class Viewer {
   onStatus:(status:ViewerStatus)=>void=()=>{};
   onError:(message:string)=>void=()=>{};
   onFatal:(message:string)=>void=message=>this.onError(message);
-  constructor(public canvas:HTMLCanvasElement, public scene:SceneRecord, private readonly budgets:readonly number[]=LOD_BUDGETS) {
+  constructor(public canvas:HTMLCanvasElement, public scene:SceneRecord, private readonly budgets:readonly number[]) {
     this.pose=scene.manifest.cameraSource==='cover'?structuredClone(scene.manifest.camera):spawnPose();
     this.coordinateRotation=displayRotation(scene.manifest.conversion?.rotation??[0,0,180]);
     this.inverseCoordinateRotation=this.coordinateRotation.clone().invert();
@@ -242,10 +242,9 @@ export class Viewer {
       const forward=(this.keys.has('KeyW')?1:0)-(this.keys.has('KeyS')?1:0);
       const right=(this.keys.has('KeyD')?1:0)-(this.keys.has('KeyA')?1:0);
       const up=(this.keys.has('KeyE')?1:0)-(this.keys.has('KeyQ')?1:0);
-      const d=new pc.Vec3().addScaled(this.camera.forward,forward).addScaled(this.camera.right,right).add(new pc.Vec3(0,up,0));
       const shift=this.keys.has('ShiftLeft')||this.keys.has('ShiftRight');
-      if(d.lengthSq()>0)d.normalize().mulScalar(dt*this.speed*(shift?3:1));
-      const delta:[number,number,number]=[d.x,d.y,d.z];
+      // Yaw-only basis: pitch must not leak into altitude, so Q/E stay the only height control.
+      const delta=moveDelta(this.pose.yaw,forward,right,up,dt*this.speed*(shift?3:1));
       if(this.collision&&this.collider){
         const position=new pc.Vec3(...rotatePoint(this.inverseCoordinateRotation,this.pose.position));
         this.mover.move(position,new pc.Vec3(...rotatePoint(this.inverseCoordinateRotation,delta)));

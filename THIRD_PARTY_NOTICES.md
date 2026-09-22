@@ -20,7 +20,7 @@ ElectronSplat is licensed under the [MIT License](LICENSE). Third-party componen
 
 Source copies of supplemental notices are in `vendor/licenses/`; the collision source provenance is in `vendor/supersplat-viewer/README.md`. Package licenses are read from the exact installed dependencies during the build. Missing required notices stop packaging.
 
-The release includes full license texts in `Win/licenses/` (Windows) or `Portable-3DGS-Viewer.app/Contents/Resources/licenses/` (macOS):
+The release includes full license texts in `Win/licenses/` (Windows) or `ElectronSplat.app/Contents/Resources/licenses/` (macOS):
 
 - `LICENSE`: ElectronSplat.
 - `THIRD-PARTY-LICENSES.txt`: application libraries and WASM notices.

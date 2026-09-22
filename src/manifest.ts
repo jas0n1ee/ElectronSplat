@@ -25,7 +25,7 @@ export function validateManifest(value:unknown): SceneManifest {
   if(!Array.isArray(s.streams)||s.streams.length<1||s.streams.length>2||s.streams[0].background!==false)throw new Error('场景缺少官方 LOD 入口。');
   const indexes=new Set<string>();
   for(const stream of s.streams) {
-    if(typeof stream.background!=='boolean'||stream.lodLevels!==(stream.background?1:3)||!Number.isSafeInteger(stream.pointCount)||stream.pointCount<1||!paths.has(stream.file)||!stream.file.endsWith('/lod-meta.json')||indexes.has(stream.file))throw new Error('官方 LOD 入口无效。');
+    if(typeof stream.background!=='boolean'||!Number.isInteger(stream.lodLevels)||stream.lodLevels<1||stream.lodLevels>16||(stream.background&&stream.lodLevels!==1)||!Number.isSafeInteger(stream.pointCount)||stream.pointCount<1||!paths.has(stream.file)||!stream.file.endsWith('/lod-meta.json')||indexes.has(stream.file))throw new Error('官方 LOD 入口无效。');
     indexes.add(stream.file);
   }
   if(s.streams[0].pointCount!==s.pointCount||s.streams.slice(1).some(v=>!v.background))throw new Error('场景前景点数不一致。');

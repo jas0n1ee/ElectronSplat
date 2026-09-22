@@ -10,7 +10,6 @@ export class Diagnostics {
     userAgent: navigator.userAgent, platform: navigator.platform, protocol: location.protocol,
     secureContext: window.isSecureContext, webgpu: 'gpu' in navigator,
     worker: typeof Worker !== 'undefined', wasm: typeof WebAssembly !== 'undefined',
-    directoryPicker: 'showDirectoryPicker' in window, directoryInput: 'webkitdirectory' in document.createElement('input'),
     pointerLock: 'requestPointerLock' in HTMLElement.prototype,
     hardwareConcurrency: navigator.hardwareConcurrency, deviceMemory: (navigator as Navigator & {deviceMemory?:number}).deviceMemory ?? null
   };
@@ -24,9 +23,11 @@ export class Diagnostics {
     const entry = {time:new Date().toISOString(),level,event,data:clean(data)};
     this.entries.push(entry);
     if (this.entries.length>800) this.entries.splice(0,this.entries.length-800);
-    console[level === 'info' ? 'info' : level](`[Portable3DGS] ${event}`,entry.data ?? '');
+    console[level === 'info' ? 'info' : level](`[ElectronSplat] ${event}`,entry.data ?? '');
     window.dispatchEvent(new CustomEvent('diagnostic',{detail:entry}));
+    // fix branch only: forwarded synchronously to the main process for real-time disk writes, so a hang leaves the last stage on disk.
+    try { window.portableDesktop?.logLine?.(entry); } catch {}
   }
-  blob(context?:unknown): Blob { return new Blob([JSON.stringify({app:'portable-3dgs',version:APP_VERSION,build:APP_BUILD,exportedAt:new Date().toISOString(),capabilities:this.capabilities,entries:this.entries,context},null,2)],{type:'application/json'}); }
+  blob(context?:unknown): Blob { return new Blob([JSON.stringify({app:'electronsplat',version:APP_VERSION,build:APP_BUILD,exportedAt:new Date().toISOString(),capabilities:this.capabilities,entries:this.entries,context},null,2)],{type:'application/json'}); }
 }
 export const log = new Diagnostics();

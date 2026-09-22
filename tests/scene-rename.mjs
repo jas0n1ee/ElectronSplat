@@ -8,7 +8,7 @@ const root=resolve('test-results/scene-rename');await rm(root,{recursive:true,fo
 const sceneDir=join(root,'scenes','scene-native-fixture'),source=await nativeFixture(sceneDir);
 const xvfb=process.env.DISPLAY?null:spawn(resolve('.tools/xvfb/root/usr/bin/Xvfb'),[':193','-screen','0','1360x1000x24','-nolisten','tcp'],{stdio:'ignore'});if(xvfb)await new Promise(r=>setTimeout(r,500));
 let app;const result={checks:[],errors:[]};
-const launch=()=>electron.launch({executablePath:resolve(process.env.PORTABLE_TEST_EXECUTABLE||'desktop-dist/Portable-3DGS-Viewer-linux-x64/Portable-3DGS-Viewer'),chromiumSandbox:true,args:[`--data-dir=${root}`],env:{...process.env,DISPLAY:process.env.DISPLAY||':193'}});
+const launch=()=>electron.launch({executablePath:resolve(process.env.PORTABLE_TEST_EXECUTABLE||'desktop-dist/ElectronSplat-linux-x64/ElectronSplat'),chromiumSandbox:true,args:[`--data-dir=${root}`],env:{...process.env,DISPLAY:process.env.DISPLAY||':193'}});
 try {
  app=await launch();let page=await app.firstWindow();page.on('pageerror',e=>result.errors.push(e.message));await expect(page.locator('.scene-card')).toHaveCount(1);
  assert.deepEqual(await page.locator('.scene-actions button').allTextContents(),['打开数据文件夹','重命名场景','永久删除场景']);

@@ -1,23 +1,23 @@
 import { log } from './log';
 import { APP_VERSION, APP_BUILD } from './version';
 import { download, sceneBytes } from './files';
-import { desktop, diskScene } from './desktop';
+import { desktop, diskScene, type ChildMessage } from './desktop';
 import { DESKTOP_LOD_BUDGETS } from './lod';
 import { DISPLAY_ROTATION } from './coordinates';
 import { Viewer } from './viewer';
 import { WebGpuInitError } from './graphics';
 import { previewCover } from './cover';
 import { ConversionQueue, type ConversionJob } from './conversion-queue';
+import { ConversionProgress } from './conversion-progress';
 import type { ConvertOptions, SceneRecord, SceneManifest, CameraPose } from './types';
 
-declare global {interface Window {PORTABLE_WORKER_SOURCE:string; portableDiagnostics: {snapshot:()=>unknown;download:()=>void};}}
+declare global {interface Window {portableDiagnostics: {snapshot:()=>unknown;download:()=>void};}}
 const $=<T extends HTMLElement=HTMLElement>(id:string)=>document.getElementById(id) as T;
 const input=(id:string)=>$<HTMLInputElement>(id);
 const button=(id:string,fn:()=>unknown)=>$(id).addEventListener('click',()=>{Promise.resolve().then(fn).catch(report);});
 const show=(id:string,visible:boolean)=>$(id).classList.toggle('hidden',!visible);
 const bytes=(n:number)=>n>=1024**3?`${(n/1024**3).toFixed(2)} GiB`:n>=1024**2?`${(n/1024**2).toFixed(1)} MiB`:`${(n/1024).toFixed(1)} KiB`;
 let scenes:SceneRecord[]=[],viewer:Viewer|null=null,foregroundFile:File|undefined,backgroundFile:File|undefined;
-let worker:Worker|undefined,workerUrl:string|undefined;
 let busy=false,generation=0,toastTimer:ReturnType<typeof setTimeout>|undefined;
 let diskTransaction:string|undefined;
 let scanning=false,diskRevision='';
@@ -191,14 +191,16 @@ function renderQueue() {
   }
   if(desktop&&queueLength!==queue.pending){queueLength=queue.pending;void desktop.setQueueLength(queueLength).catch(report);}
 }
-function stopWorker() {worker?.terminate();worker=undefined;if(workerUrl)URL.revokeObjectURL(workerUrl);workerUrl=undefined;}
+// Child-process events are pushed from main. Register the ipcRenderer listener exactly once and
+// hand messages to whichever conversion is current, instead of adding a listener per job.
+let childEventHandler:((message:ChildMessage)=>void)|undefined;
+desktop?.onConversionEvent?.(message=>childEventHandler?.(message));
 async function startConversion() {
   if(!desktop)throw new Error('请通过 Electron 桌面应用打开。');
   const foreground=foregroundFile??input('foreground').files?.[0];
   const background=backgroundFile;
   if(!foreground)throw new Error('请先选择前景 Gaussian PLY。');
   if(!input('scene-name').value.trim())throw new Error('请填写场景名称。');
-  if(!window.PORTABLE_WORKER_SOURCE||typeof Worker==='undefined'||typeof WebAssembly==='undefined')throw new Error('离线转换器缺失，或浏览器不支持 Worker / WebAssembly。请完整复制 portable 目录。');
   const id=`scene-${Date.now().toString(36)}-${Array.from(crypto.getRandomValues(new Uint8Array(4)),v=>v.toString(16).padStart(2,'0')).join('')}`;
   const cellSize=Number(document.querySelector<HTMLInputElement>('input[name="voxel-size"]:checked')?.value);
   if(![0.1,0.2,0.5].includes(cellSize))throw new Error('请选择提取尺寸。');
@@ -211,13 +213,19 @@ async function startConversion() {
 async function runConversion(job:ConversionJob<ConversionInput>,signal:AbortSignal) {
   const {foreground,background,options}=job.payload!;const {id}=options;const disk=desktop!;
   const current=++generation;const start=performance.now();let lastProgress=start;
+  // Whole-scene estimate for the progress bar. The child reports phase-relative fractions; this is
+  // the model that turns them into one non-resetting bar, which is why it lives here and not there.
+  const overall=new ConversionProgress(background?[foreground.size,background.size]:[foreground.size]);
   let resolveCompletion!:()=>void,rejectCompletion!:(error:unknown)=>void;
   const completion={promise:new Promise<void>((resolve,reject)=>{resolveCompletion=resolve;rejectCompletion=reject;}),resolve:()=>resolveCompletion(),reject:(error:unknown)=>rejectCompletion(error)};
   void completion.promise.catch(()=>{});
   let beginPending:Promise<string>|undefined;
+  let lastProgressLog=start;
   const update=(stage:string,detail:string,fraction?:number)=>{
     lastProgress=performance.now();
-    if(job.stage!==stage)log.add('info','conversion.stage',{id,stage,detail});
+    if(job.stage!==stage){log.add('info','conversion.stage',{id,stage,detail});lastProgressLog=lastProgress;}
+    // fix branch only: throttle progress-detail logging to once every 5 seconds within a stage, so a hang still shows how far it got.
+    else if(lastProgress-lastProgressLog>5000){lastProgressLog=lastProgress;log.add('info','conversion.progress',{id,stage,detail,fraction});}
     queue.update(job,stage,detail,fraction);
   };
   $('progress-time').textContent='正在准备本场景转换…';
@@ -227,10 +235,16 @@ async function runConversion(job:ConversionJob<ConversionInput>,signal:AbortSign
   const timer=setInterval(()=>{
     const secs=Math.round((performance.now()-start)/1000),idle=Math.round((performance.now()-lastProgress)/1000);
     $('progress-time').textContent=`已用时 ${Math.floor(secs/60)} 分 ${secs%60} 秒 · 已生成 ${bytes(outputBytes)}${idle>20?` · 当前步骤已计算 ${idle} 秒，可随时取消`:' · 请保持页面打开'}`;
+    // fix branch only: 10-second heartbeat including heap memory, so when it hangs the file shows the last point it was still alive at.
+    if(secs%10===0){
+      const heap=(performance as Performance & {memory?:{usedJSHeapSize:number}}).memory?.usedJSHeapSize;
+      log.add('info','conversion.heartbeat',{id,stage:job.stage,detail:job.detail,progress:Math.round(job.progress*1000)/10,outputBytes,heapMB:heap?Math.round(heap/1048576):null});
+    }
   },1000);
   const fail=(error:unknown)=>{
     if(current!==generation)return;
-    generation++;clearTimeout(bootTimeout);clearInterval(timer);stopWorker();job.cancellable=false;
+    generation++;clearTimeout(bootTimeout);clearInterval(timer);job.cancellable=false;
+    childEventHandler=undefined;
     const cancelled=signal.aborted;
     update(cancelled?'正在取消':'转换失败，正在清理',error instanceof Error?error.message:String(error));
     if(!cancelled)report(error);
@@ -238,6 +252,7 @@ async function runConversion(job:ConversionJob<ConversionInput>,signal:AbortSign
     // A late begin must settle and be aborted before the queue starts its next job.
     void (async()=>{
       const token=diskTransaction??await beginPending?.catch(()=>undefined);
+      if(token)await desktop?.cancelConversion(token);
       if(token)await disk.abort(token);
       diskTransaction=undefined;
     })().catch(cleanupError=>{report(cleanupError);}).finally(()=>completion.reject(error));
@@ -261,80 +276,81 @@ async function runConversion(job:ConversionJob<ConversionInput>,signal:AbortSign
     const token=await beginPending;
     if(current!==generation)return await completion.promise;
     diskTransaction=token;
-    startup('worker-boot','启动离线转换器','正在启动转换 Worker…');
-    workerUrl=URL.createObjectURL(new Blob([window.PORTABLE_WORKER_SOURCE],{type:'text/javascript'}));
-    worker=new Worker(workerUrl);const currentWorker=worker;
-    log.add('info','conversion.start',{foregroundBytes:foreground.size,backgroundBytes:background?.size??0,options,output:'native-disk'});
-    worker.onerror=e=>{clearTimeout(bootTimeout);fail(new Error(`转换 Worker 出错：${e.message}`));};
-    worker.onmessage=e=>{
+    // Shared tail for both runners: turn a finished conversion into a committed scene.
+    const finish=async(manifest:SceneManifest,preview:number[][],stats:Record<string,unknown>)=>{
+      clearInterval(timer);
+      update('生成首图与场景索引','正在绘制本场景首图…',.97);
+      const cover=await previewCover(manifest,preview);
       if(current!==generation)return;
-      const msg=e.data;
-      if(msg.type==='ready'){clearTimeout(bootTimeout);log.add('info','conversion.workerBootReady',{id,elapsedMs:performance.now()-start});currentWorker.postMessage({type:'start',foreground:{name:foreground.name,size:foreground.size},background:background?{name:background.name,size:background.size}:undefined,options});return;}
-      if(msg.type==='read') {
-        void (async()=>{
-          const file=msg.fileId===0?foreground:msg.fileId===1?background:undefined;
-          if(!file||!Number.isSafeInteger(msg.start)||!Number.isSafeInteger(msg.end)||msg.start<0||msg.end<msg.start||msg.end-msg.start>8*1024*1024)throw new Error('转换器请求了无效的文件范围。');
-          const begun=performance.now();let readTimeout:ReturnType<typeof setTimeout>|undefined;
-          let data:ArrayBuffer;
-          try {
-            data=await Promise.race([file.slice(msg.start,msg.end).arrayBuffer(),new Promise<never>((_,reject)=>{
-              readTimeout=setTimeout(()=>reject(new Error(`读取 ${file.name} 超过 30 秒（字节 ${msg.start}–${msg.end}）。请检查源文件所在磁盘。`)),30000);
-            })]);
-          } catch(error){if(current===generation)log.add('error','conversion.inputReadFailed',{file:file.name,start:msg.start,end:msg.end,durationMs:performance.now()-begun});throw error;}
-          finally{clearTimeout(readTimeout);}
-          if(current===generation)currentWorker.postMessage({type:'read-result',id:msg.id,bytes:data},[data]);
-        })().catch(error=>{if(current===generation)currentWorker.postMessage({type:'read-result',id:msg.id,error:error instanceof Error?error.message:String(error)});});
-        return;
-      }
-      if(msg.type==='work-read') {
-        void disk.readWork(diskTransaction!,msg.path,msg.start,msg.end).then(bytes=>{
-          const data=new Uint8Array(bytes).buffer;
-          if(current===generation)currentWorker.postMessage({type:'read-result',id:msg.id,bytes:data},[data]);
-        }).catch(error=>{if(current===generation)currentWorker.postMessage({type:'read-result',id:msg.id,error:error instanceof Error?error.message:String(error)});});
-        return;
-      }
-      if(msg.type==='progress'){update(msg.stage,msg.detail,msg.fraction??undefined);return;}
+      let record:SceneRecord;
+      if(desktop){
+        const commitToken=diskTransaction!;
+        update('保存首图','正在将首图写入场景文件夹…',.98);
+        const coverBytes=new Uint8Array(await cover.arrayBuffer());
+        if(current!==generation)return;
+        await desktop.write(commitToken,manifest.cover,coverBytes);
+        if(current!==generation)return;
+        // Completion is now a short, indivisible disk commit.
+        job.cancellable=false;
+        update('保存场景索引','正在校验并完成场景保存…',.99);
+        record=diskScene(await desktop.commit(commitToken,manifest));diskTransaction=undefined;
+      }else throw new Error('桌面保存接口不可用。');
+      if(current!==generation)return;
+      scenes.unshift(record);renderLibrary();
+      log.add('info','conversion.complete',{id,...stats});
+      const approx=stats as {invalid?:number;coarsenings?:number;clippedSplats?:number;cellSize?:number};
+      if(approx.invalid||approx.coarsenings||approx.clippedSplats)log.add('warn','conversion.approximations',{invalidRows:approx.invalid,voxelCoarsenings:approx.coarsenings,clippedSplats:approx.clippedSplats,effectiveCellSize:approx.cellSize});
+      toast(`场景已生成：${(manifest.pointCount/10000).toFixed(1)} 万点，${manifest.leafCount} 个空间块。已保存到 scenes 文件夹，可直接打开。`,false,14000);
+      completion.resolve();
+      $('library-info').textContent=`最近生成：${manifest.name} · 碰撞尺寸 ${approx.cellSize??options.cellSize} 米${approx.invalid?` · 已移除 ${approx.invalid} 个无效点`:''}`;
+    };
+
+    // Child-process conversion: the child owns all disk I/O, so no bytes cross IPC. Progress and
+    // the final manifest come back as events; the transaction lifecycle stays here.
+    const foregroundPath=disk.pathForFile(foreground);
+    const backgroundPath=background?disk.pathForFile(background):undefined;
+    if(!foregroundPath)throw new Error('无法获取源文件路径，无法启动转换进程。');
+    // The child reports its own progress, so there is no per-phase timeout -- but a process that
+    // starts and then says nothing at all must not leave the renderer waiting forever. The first
+    // message arrives after the child's imports (about 12 s even on a warm Windows disk), so this
+    // only fires when something is genuinely wrong.
+    clearTimeout(bootTimeout);
+    const childBoot=setTimeout(()=>{
+      log.add('error','conversion.childSilent',{id,seconds:90});
+      fail(new Error('转换进程启动后 90 秒没有任何回应，已停止本次任务。详情见诊断日志。'));
+    },90000);
+    const clearChildBoot=()=>clearTimeout(childBoot);
+    signal.addEventListener('abort',clearChildBoot,{once:true});
+    update('启动转换进程','正在启动转换进程…',.02);
+    log.add('info','conversion.start',{runner:'node',foregroundPath,backgroundPath:backgroundPath??null,foregroundBytes:foreground.size,backgroundBytes:background?.size??0,options,output:'child-process'});
+    let pendingManifest:{manifest:SceneManifest;preview:number[][];stats:Record<string,unknown>}|undefined;
+    childEventHandler=(msg:ChildMessage)=>{
+      clearChildBoot();
+      if(current!==generation)return;
+      lastProgress=performance.now();
+      if(msg.type==='progress'){update(msg.stage,msg.detail??'',overall.byPhase(msg.phase,msg.fraction));return;}
       if(msg.type==='log'){log.add('info',msg.event,msg.data);return;}
-      if(msg.type==='error'){log.add('error','conversion.worker',{message:msg.message,stack:msg.stack});fail(new Error(msg.message));return;}
-      if(msg.type==='file') {
-        void (async()=>{
-          if(current!==generation)return;
-          await disk.write(diskTransaction!,msg.path,new Uint8Array(msg.bytes));
-          if(!msg.path.startsWith('.work/'))outputBytes+=msg.bytes.byteLength;
-          if(current===generation)currentWorker.postMessage({type:'ack'});
-        })().catch(fail);
-        return;
-      }
-      if(msg.type==='complete') {
-        clearInterval(timer);stopWorker();
-        void (async()=>{
-          const manifest=msg.manifest as SceneManifest;
-          update('生成首图与场景索引','正在绘制本场景首图…',.97);
-          const cover=await previewCover(manifest,msg.preview);
-          if(current!==generation)return;
-          let record:SceneRecord;
-          if(desktop){
-            const token=diskTransaction!;
-            update('保存首图','正在将首图写入场景文件夹…',.98);
-            const coverBytes=new Uint8Array(await cover.arrayBuffer());
-            if(current!==generation)return;
-            await desktop.write(token,manifest.cover,coverBytes);
-            if(current!==generation)return;
-            // Completion is now a short, indivisible disk commit.
-            job.cancellable=false;
-            update('保存场景索引','正在校验并完成场景保存…',.99);
-            record=diskScene(await desktop.commit(token,manifest));diskTransaction=undefined;
-          }else throw new Error('桌面保存接口不可用。');
-          if(current!==generation)return;
-          scenes.unshift(record);renderLibrary();
-          log.add('info','conversion.complete',{id,...msg.stats});
-          if(msg.stats.invalid||msg.stats.coarsenings||msg.stats.clippedSplats)log.add('warn','conversion.approximations',{invalidRows:msg.stats.invalid,voxelCoarsenings:msg.stats.coarsenings,clippedSplats:msg.stats.clippedSplats,effectiveCellSize:msg.stats.cellSize});
-          toast(`场景已生成：${(manifest.pointCount/10000).toFixed(1)} 万点，${manifest.leafCount} 个空间块。已保存到 scenes 文件夹，可直接打开。`,false,14000);
-          completion.resolve();
-          $('library-info').textContent=`最近生成：${manifest.name} · 碰撞尺寸 ${msg.stats.cellSize} 米${msg.stats.invalid?` · 已移除 ${msg.stats.invalid} 个无效点`:''}`;
-        })().catch(fail);
+      // The child's failures are the official library's, and they are English. Lead with the
+      // product's own wording and keep the library's text as the detail: the convention is that
+      // anything surfaced in the UI is Chinese, and the detail is what makes it actionable.
+      if(msg.type==='error'){log.add('error','conversion.child',{message:msg.message});fail(new Error(`转换失败：${msg.message}`));return;}
+      if(msg.type==='manifest'){pendingManifest={manifest:msg.manifest,preview:msg.preview,stats:msg.stats};return;}
+      // Commit only once the child is gone. On Windows any open handle inside the staging tree --
+      // including the child's own working directory -- makes the commit's rename fail with EBUSY.
+      if(msg.type==='exit'){
+        // A child that ends without handing over a manifest has failed, whatever its exit code says.
+        // Treating code 0 as success left the renderer waiting on a conversion that was already over:
+        // a Node process exits 0 when its event loop simply drains.
+        if(!pendingManifest){fail(new Error(signal.aborted?'转换已取消。':'转换进程未提交结果就结束了。详情见诊断日志。'));return;}
+        if(msg.code!==0){fail(new Error(signal.aborted?'转换已取消。':`转换进程意外结束（退出码 ${msg.code}）。详情见诊断日志。`));return;}
+        const done=pendingManifest;pendingManifest=undefined;childEventHandler=undefined;
+        void finish(done.manifest,done.preview,{...done.stats,runner:'node',durationMs:performance.now()-start,cellSize:options.cellSize,shBands:0}).catch(fail);
       }
     };
+    void disk.runConversion({token,id,name:options.name,foreground:foregroundPath,background:backgroundPath,
+      options:{scale:options.scale,rotation:options.rotation,cellSize:options.cellSize,shBands:0,chunkSize:options.chunkSize}})
+      .then(({childLog})=>log.add('info','conversion.childSpawned',{childLog}))
+      .catch(fail);
   }catch(e){fail(e);}
   try{await completion.promise;}finally{signal.removeEventListener('abort',cancel);clearTimeout(bootTimeout);clearInterval(timer);}
 }
@@ -342,7 +358,7 @@ async function runConversion(job:ConversionJob<ConversionInput>,signal:AbortSign
 function refreshDiagnostics() {
   const grid=$('capabilities-grid');grid.replaceChildren();
   const caps=log.capabilities;
-  for(const [key,value] of Object.entries({协议:caps.protocol,WebGPU入口:caps.webgpu,Worker:caps.worker,WebAssembly:caps.wasm,文件夹读取:caps.directoryInput,指针锁:caps.pointerLock})) {
+  for(const [key,value] of Object.entries({协议:caps.protocol,WebGPU入口:caps.webgpu,Worker:caps.worker,WebAssembly:caps.wasm,指针锁:caps.pointerLock})) {
     const div=document.createElement('div');div.textContent=key;const b=document.createElement('b');b.textContent=typeof value==='boolean'?(value?'可用':'未提供'):String(value);div.append(b);grid.append(div);
   }
   $('log-output').textContent=log.entries.slice(-120).map(e=>`${e.time.slice(11,23)} ${e.level.toUpperCase()} ${e.event}\n${e.data?JSON.stringify(e.data):''}`).join('\n');
@@ -417,7 +433,7 @@ if(desktop){
   void refreshDisk().then(async()=>{if(initialScene){const record=scenes.find(s=>s.manifest.id===initialScene);if(record)await openScene(record);}}).catch(report);
   window.addEventListener('focus',()=>{void refreshDisk().catch(report);});
   setInterval(()=>{if(activePage==='library'&&!document.hidden)void refreshDisk().catch(report);},3000);
-}else $('library-info').textContent='请通过 Electron 桌面应用打开 Portable。';
+}else $('library-info').textContent='请通过 Electron 桌面应用打开 ElectronSplat。';
 
 function setViewerPanelsHidden(hidden:boolean) {
   $('viewer-page').classList.toggle('panels-hidden',hidden);

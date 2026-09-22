@@ -18,7 +18,7 @@ const xvfb=process.env.DISPLAY?null:spawn(resolve('.tools/xvfb/root/usr/bin/Xvfb
 if(xvfb)await new Promise(r=>setTimeout(r,500));
 let app;const result={};
 try{
- app=await electron.launch({executablePath:join(runtime,'Portable-3DGS-Viewer'),chromiumSandbox:true,env:{...process.env,DISPLAY:process.env.DISPLAY||':187'}});
+ app=await electron.launch({executablePath:join(runtime,'ElectronSplat'),chromiumSandbox:true,env:{...process.env,DISPLAY:process.env.DISPLAY||':187'}});
  const page=await app.firstWindow();await expect(page.locator('.scene-card')).toHaveCount(2);
  const info=await page.evaluate(()=>window.portableDesktop.info());
  assert.equal(info.scenesDirectory,join(usb,'scenes'));

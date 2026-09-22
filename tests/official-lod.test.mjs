@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
-import { Column, DataTable, Transform, WorkerQueue, MemoryFileSystem, dataTableToChunkSource, stackLods, writeLodSource, writeFile, readFile as readPly, concatSource, createChunkDataPool, logger } from '@playcanvas/splat-transform';
+import { Column, DataTable, Transform, WorkerQueue, MemoryFileSystem, dataTableToChunkSource, stackLods, writeLodSource, writeFile, readFile as readPly, readPly as readPlySource, processSource, bakeTransform, MemoryReadFileSystem, concatSource, createChunkDataPool, logger } from '@playcanvas/splat-transform';
 import { baseNames } from './fixtures.mjs';
 import { Quat } from 'playcanvas';
 logger.setVerbosity('quiet');
@@ -37,33 +37,29 @@ test('official default directory and index validation reject unsafe paths and in
   } finally {await rm(dir,{recursive:true,force:true});}
 });
 
-test('disk-staged lazy inputs produce the same official whole-scene output as direct inputs',async()=>{
-  const dir=await mkdtemp(join(tmpdir(),'portable-staging-'));
+test('streaming readPly with declared display transform matches byte for byte',async()=>{
+  WorkerQueue.maxWorkers=0;
   try {
-    await build({entryPoints:['src/conversion-io.ts'],outfile:join(dir,'io.mjs'),bundle:true,packages:'external',platform:'node',format:'esm',logLevel:'silent'});
-    // Resolve this dependency from the repository instead of the OS temp directory.
-    const {symlink}=await import('node:fs/promises');await symlink(join(process.cwd(),'node_modules'),join(dir,'node_modules'));
-    const {WorkFileSystem,OutputFileSystem}=await import(pathToFileURL(join(dir,'io.mjs')));
-    const storage=new Map(),ranges=[];
-    const work=new WorkFileSystem(async(path,start,end)=>{ranges.push([start,end]);return storage.get(path).slice(start,end).buffer;},4096);
-    const staging=new OutputFileSystem(async(path,bytes)=>{storage.set(path,bytes.slice());work.files.set(path,bytes.length);});
-    const opened=[],levels=[],transform=new Transform(undefined,new Quat().setFromEulerAngles(90,0,180),1);let pool;
-    for(const [lod,count] of [128,64,32].entries()){
-      const t=table(count,transform),sources=[];
-      for(let half=0;half<2;half++){
-        const part=new DataTable(t.columns.map(c=>new Column(c.name,c.data.slice(half*count/2,(half+1)*count/2))),transform);
-        const filename=`.work/fg/${lod}/${half}.ply`;
-        await writeFile({filename,outputFormat:'ply',dataTable:part,options:{}},staging);
-        const input=await readPly({filename,inputFormat:'ply',options:{},fileSystem:work});sources.push(...input);opened.push(...input);
-      }
-      pool??=createChunkDataPool({chunkSize:sources[0].meta.chunkSize});levels.push(concatSource(sources,pool));
-    }
-    const output=new Map(),fs=new OutputFileSystem(async(path,bytes)=>{output.set('/'+path,bytes.slice());});
-    WorkerQueue.maxWorkers=0;
-    try{await writeLodSource({filename:'/lod/lod-meta.json',mainSource:stackLods(levels),envSource:null,iterations:4,chunkCount:512,chunkExtent:16,chunkMin:8},fs);}
-    finally{for(const source of opened)await source.close();pool.destroy();work.clear();await WorkerQueue.destroy();}
-    const direct=await encode(0,transform);assert.deepEqual([...output.keys()].sort(),[...direct.keys()].sort());
-    for(const [path,bytes] of direct)assert.deepEqual(output.get(path),bytes,path);
-    assert.ok(ranges.length>0);assert.ok(ranges.every(([start,end])=>end-start<=8*1024**2));
-  } finally {await rm(dir,{recursive:true,force:true});}
+    const R=new Transform().fromEulers(90,0,180);
+    const reference=new MemoryFileSystem();
+    await writeLodSource({filename:'/lod/lod-meta.json',mainSource:stackLods([dataTableToChunkSource(table(256,R.clone()),128),dataTableToChunkSource(table(128,R.clone()),128)]),envSource:null,iterations:4,chunkCount:512,chunkExtent:16},reference);
+    const disk=new MemoryFileSystem();
+    await writeFile({filename:'input.ply',outputFormat:'ply',dataTable:table(256,Transform.PLY),options:{}},disk);
+    const reader=new MemoryReadFileSystem();reader.set('input.ply',disk.results.get('input.ply'));
+    const pool=createChunkDataPool({chunkSize:128});
+    const src=await readPlySource(await reader.createSource('input.ply'),pool);
+    const stripped=await processSource(src,[{kind:'filterBands',value:0}],pool);
+    const level0={meta:{...stripped.meta,transform:new Transform().fromEulers(90,0,180)},read:req=>stripped.read(req),close:()=>stripped.close()};
+    // level1 goes through the production staging path: write the PLY out and read it back (the tag returns to PLY space),
+    // and when it is mixed with level0 whose tag is the display orientation, stackLods requires agreement — level0 must be baked first.
+    await writeFile({filename:'level-1.ply',outputFormat:'ply',dataTable:table(128,R.clone()),options:{}},disk);
+    reader.set('level-1.ply',disk.results.get('level-1.ply'));
+    const level1=await readPlySource(await reader.createSource('level-1.ply'),pool);
+    const out=new MemoryFileSystem();
+    await writeLodSource({filename:'/lod/lod-meta.json',mainSource:stackLods([bakeTransform(level0,Transform.PLY),level1]),envSource:null,iterations:4,chunkCount:512,chunkExtent:16},out);
+    assert.deepEqual([...out.results.keys()].sort(),[...reference.results.keys()].sort());
+    for(const [path,bytes] of reference.results)assert.deepEqual(out.results.get(path),bytes,path);
+  } finally {await WorkerQueue.destroy();}
 });
+
+// fix branch: consistency of StreamWorkFileSystem chunked append writes + WorkFileSystem read-back.

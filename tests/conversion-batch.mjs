@@ -8,7 +8,7 @@ const root=resolve('test-results/conversion-batch');await rm(root,{recursive:tru
 const xvfb=process.env.DISPLAY?null:spawn(resolve('.tools/xvfb/root/usr/bin/Xvfb'),[':194','-screen','0','1360x1000x24','-nolisten','tcp'],{stdio:'ignore'});if(xvfb)await new Promise(r=>setTimeout(r,500));
 let app;const result={checks:[],errors:[]};
 try {
- app=await electron.launch({executablePath:resolve(process.env.PORTABLE_TEST_EXECUTABLE||'desktop-dist/Portable-3DGS-Viewer-linux-x64/Portable-3DGS-Viewer'),chromiumSandbox:true,args:['--enable-unsafe-webgpu','--enable-unsafe-swiftshader','--enable-features=Vulkan','--use-vulkan=swiftshader','--use-angle=vulkan',`--data-dir=${root}`],env:{...process.env,DISPLAY:process.env.DISPLAY||':194'}});
+ app=await electron.launch({executablePath:resolve(process.env.PORTABLE_TEST_EXECUTABLE||'desktop-dist/ElectronSplat-linux-x64/ElectronSplat'),chromiumSandbox:true,args:['--enable-unsafe-webgpu','--enable-unsafe-swiftshader','--enable-features=Vulkan','--use-vulkan=swiftshader','--use-angle=vulkan',`--data-dir=${root}`],env:{...process.env,DISPLAY:process.env.DISPLAY||':194'}});
  const page=await app.firstWindow();page.on('pageerror',e=>result.errors.push(e.message));await page.waitForFunction(()=>!!window.portableDiagnostics);
  await app.evaluate(({ipcMain,dialog,BrowserWindow})=>{
   globalThis.calls=[];globalThis.closeQuestions=[];globalThis.entered=0;globalThis.commits=0;

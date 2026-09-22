@@ -33,7 +33,7 @@ export async function writeAppLicenses(out) {
 }
 
 export async function writeRuntimeLicenses(staged, mac) {
-  const out = join(staged, mac ? 'Portable-3DGS-Viewer.app/Contents/Resources/licenses' : 'licenses');
+  const out = join(staged, mac ? 'ElectronSplat.app/Contents/Resources/licenses' : 'licenses');
   await mkdir(out, { recursive: true });
   for (const file of ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'THIRD-PARTY-LICENSES.txt', 'LIBWEBP-LICENSE.txt']) {
     await copyFile(join('.build/electron', file), join(out, file));

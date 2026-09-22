@@ -9,7 +9,7 @@ const input=await sparseLargeFixture(),result={input,errors:[],network:[]};
 const xvfb=process.env.DISPLAY?null:spawn(resolve('.tools/xvfb/root/usr/bin/Xvfb'),[':196','-screen','0','1360x900x24','-nolisten','tcp'],{stdio:'ignore'});
 if(xvfb)await new Promise(r=>setTimeout(r,500));let app;
 try {
- app=await electron.launch({executablePath:resolve(process.env.PORTABLE_TEST_EXECUTABLE||'desktop-dist/Portable-3DGS-Viewer-linux-x64/Portable-3DGS-Viewer'),chromiumSandbox:true,args:['--enable-unsafe-webgpu','--enable-unsafe-swiftshader','--enable-features=Vulkan','--use-vulkan=swiftshader','--use-angle=vulkan',`--data-dir=${root}`],env:{...process.env,DISPLAY:process.env.DISPLAY||':196'}});
+ app=await electron.launch({executablePath:resolve(process.env.PORTABLE_TEST_EXECUTABLE||'desktop-dist/ElectronSplat-linux-x64/ElectronSplat'),chromiumSandbox:true,args:['--enable-unsafe-webgpu','--enable-unsafe-swiftshader','--enable-features=Vulkan','--use-vulkan=swiftshader','--use-angle=vulkan',`--data-dir=${root}`],env:{...process.env,DISPLAY:process.env.DISPLAY||':196'}});
  const page=await app.firstWindow();page.on('pageerror',e=>result.errors.push(e.message));page.on('request',r=>{if(/^https?:/.test(r.url()))result.network.push(r.url());});
  await page.locator('#nav-import').click();await page.locator('#foreground').setInputFiles(input.path);await page.locator('#convert-button').click();
  await page.waitForFunction(()=>!window.portableDiagnostics.snapshot().busy,null,{timeout:300000});

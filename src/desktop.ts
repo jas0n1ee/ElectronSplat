@@ -9,13 +9,32 @@ type DesktopAPI = {
   openSceneFolder: (token:string) => Promise<void>;
   renameScene: (token:string,name:string) => Promise<DiskScene>;
   deleteScene: (token:string) => Promise<boolean>;
-  readWork: (token:string,path:string,start:number,end:number) => Promise<Uint8Array>;
   begin: (id:string) => Promise<string>;
   write: (token:string,path:string,bytes:Uint8Array) => Promise<void>;
   commit: (token:string,manifest:SceneManifest) => Promise<DiskScene>;
   abort: (token:string) => Promise<void>;
   saveCover: (token:string,bytes:Uint8Array,pose:CameraPose) => Promise<DiskScene>;
+  // Child-process conversion: the renderer hands over real paths, the child does its own disk I/O.
+  pathForFile: (file:File) => string;
+  runConversion: (payload:ChildJob) => Promise<{childLog:string}>;
+  cancelConversion: (token:string) => Promise<boolean>;
+  onConversionEvent: (cb:(message:ChildMessage)=>void) => void;
+  // fix branch only: renderer-process logs land on disk in real time.
+  logLine?: (entry:{time:string;level:string;event:string;data?:unknown}) => void;
 };
+export type ChildJob = {
+  token:string; id:string; name:string;
+  foreground:string; background?:string;
+  options: { scale:number; rotation:[number,number,number]; cellSize:number; shBands:number; chunkSize:number };
+};
+export type ChildMessage =
+  // The child reports which phase it is in and how far through that phase it is. Turning that into
+  // one whole-scene bar is the renderer's job -- see ConversionProgress.byPhase.
+  | {type:'progress'; phase:'read'|'decimate'|'partition'|'errors'|'encode'|'voxel'; stage:string; fraction:number; detail?:string}
+  | {type:'log'; event:string; data?:unknown}
+  | {type:'manifest'; manifest:SceneManifest; preview:number[][]; stats:Record<string,unknown>}
+  | {type:'error'; message:string; stack?:string}
+  | {type:'exit'; code:number|null; signal:string|null};
 declare global { interface Window { portableDesktop?: DesktopAPI } }
 export const desktop = window.portableDesktop;
 export function diskScene(entry:DiskScene):SceneRecord {

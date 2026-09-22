@@ -1,6 +1,6 @@
 {
   "name": "electronsplat",
-  "version": "0.1.0",
+  "version": "0.1.1-dev",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,7 +11,6 @@
     "start": "npm run build:desktop && electron .build/electron",
     "package:desktop": "npm run build:desktop && node scripts/package-desktop.mjs",
     "test:desktop": "node tests/desktop.mjs",
-    "test:conversion-gpu": "node tests/conversion-gpu.mjs",
     "test:portability": "node tests/platform-portability.mjs",
     "transfer:mac": "node scripts/package-mac-transfer.mjs",
     "transfer:win": "node scripts/package-windows-transfer.mjs",
@@ -27,6 +26,7 @@
     "playcanvas": "2.22.2"
   },
   "devDependencies": {
+    "@electron/osx-sign": "2.7.0",
     "@electron/packager": "20.3.0",
     "@playwright/test": "1.63.0",
     "@types/node": "26.5.1",

@@ -156,30 +156,13 @@ class Library {
     await fs.rm(dir, { recursive:true });
     this.records.delete(token);
   }
-  async readWork(token, relative, start, end) {
-    const tx = this.tx(token); safePath(relative);
-    const size = tx.workFiles.get(relative);
-    if (size === undefined || !Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || end > size || end-start > 8*1024**2) throw new Error('临时文件读取范围无效。');
-    const {file,stat} = await this.checked(tx.dir,relative);
-    if(stat.size !== size) throw new Error('临时文件已变化。');
-    const handle = await fs.open(file,'r'), data = Buffer.alloc(end-start);
-    try {
-      let offset=0;
-      while(offset<data.length) {
-        const {bytesRead}=await handle.read(data,offset,data.length-offset,start+offset);
-        if(!bytesRead) throw new Error('临时文件读取不完整。');
-        offset+=bytesRead;
-      }
-      return data;
-    } finally { await handle.close(); }
-  }
   async begin(id) {
     if (this.transaction) throw new Error('已有转换正在保存。');
     sceneId(id);
     const dest = path.join(this.root, id);
     try { await fs.lstat(dest); throw new Error('场景目录已存在。'); } catch (e) { if (e.code !== 'ENOENT') throw e; }
     const token = randomUUID(), dir = await fs.mkdtemp(path.join(this.root, '.converting-'));
-    this.transaction = { token, id, dir, dest, workFiles:new Map() };
+    this.transaction = { token, id, dir, dest };
     return token;
   }
   tx(token) { if (!this.transaction || this.transaction.token !== token) throw new Error('转换已取消或保存任务无效。'); return this.transaction; }
@@ -189,12 +172,11 @@ class Library {
   }
   async write(token, relative, bytes) {
     const tx = this.tx(token); safePath(relative);
-    if (relative === 'scene.json' || !(/^(lod|background)\/.+\.(json|webp|sog)$/.test(relative) || ['collision/scene.voxel.json','collision/scene.voxel.bin'].includes(relative) || relative === 'cover.png' || /^\.work\/(fg|bg)\/[0-2]\/\d+\.ply$/.test(relative))) throw new Error('不允许写入此文件。');
+    if (relative === 'scene.json' || !(/^(lod|background)\/.+\.(json|webp|sog)$/.test(relative) || ['collision/scene.voxel.json','collision/scene.voxel.bin'].includes(relative) || relative === 'cover.png')) throw new Error('不允许写入此文件。');
     const data = relative==='collision/scene.voxel.bin'&&bytes instanceof Uint8Array&&bytes.byteLength===0?Buffer.alloc(0):this.data(bytes), dest = path.join(tx.dir, relative), parent = path.dirname(dest);
     await fs.mkdir(parent, { recursive: true });
     if (!within(tx.dir, await fs.realpath(parent))) throw new Error('保存目录已变化。');
     await fs.writeFile(dest, data, { flag: 'wx' });
-    if(relative.startsWith('.work/'))tx.workFiles.set(relative,data.length);
   }
   async commit(token, value) {
     const tx = this.tx(token), manifest = validateManifest(value);

@@ -14,7 +14,7 @@ const xvfb=process.env.DISPLAY?null:spawn(resolve('.tools/xvfb/root/usr/bin/Xvfb
 if(xvfb)await new Promise(r=>setTimeout(r,500));
 let app;
 try {
- app=await electron.launch({executablePath:resolve(process.env.PORTABLE_ICON_EXECUTABLE||'desktop-dist/Portable-3DGS-Viewer-linux-x64/Portable-3DGS-Viewer'),chromiumSandbox:true,args:[`--data-dir=${root}`],env:{...process.env,DISPLAY:process.env.DISPLAY||':192'}});
+ app=await electron.launch({executablePath:resolve(process.env.PORTABLE_ICON_EXECUTABLE||'desktop-dist/ElectronSplat-linux-x64/ElectronSplat'),chromiumSandbox:true,args:[`--data-dir=${root}`],env:{...process.env,DISPLAY:process.env.DISPLAY||':192'}});
  const sizes=[16,20,24,32,40,48,64,128,256,512,1024];
  const result=await app.evaluate(({nativeImage},{input,sizes})=>{
   const source=nativeImage.createFromPath(input);if(source.isEmpty())throw new Error('Source icon could not be decoded');

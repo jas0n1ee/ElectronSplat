@@ -1,6 +1,6 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, symlink, cp } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, symlink, cp, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
@@ -15,7 +15,7 @@ const fixture=await mkdtemp(join(tmpdir(),'portable-fixture-'));
 after(()=>rm(fixture,{recursive:true,force:true}));
 const source=await nativeFixture(fixture);
 const paths=[source.cover,source.collision,...source.resources.map(r=>r.file)];
-async function setup(t){const root=await mkdtemp(join(tmpdir(),'portable-native-'));t.after(()=>rm(root,{recursive:true,force:true}));const lib=new Library(root);await lib.init();return{root,lib};}
+async function setup(t){const root=await realpath(await mkdtemp(join(tmpdir(),'portable-native-')));t.after(()=>rm(root,{recursive:true,force:true}));const lib=new Library(root);await lib.init();return{root,lib};}
 test('shared scenes and legacy scenes are discovered and edited in their own directories; new scenes save to shared root',async t=>{
   const {root}=await setup(t),legacyRoot=join(root,'Linux');
   const lib=new Library(root,[legacyRoot]);await lib.init();
@@ -112,17 +112,6 @@ test('scene folder actions reject stale directories and delete only the selected
   await rm(other,{recursive:true});await symlink(root,other);
   await assert.rejects(lib.deleteScene(token),/目录已变化/);assert.equal(await readFile(secret,'utf8'),'keep');
 });
-test('staging reads are bounded to registered files in the current transaction and never published',async t=>{
-  const {root,lib}=await setup(t),id='scene-work',token=await lib.begin(id),file='.work/fg/0/1.ply';
-  await lib.write(token,file,new Uint8Array([10,20,30,40]));
-  assert.deepEqual([...await lib.readWork(token,file,1,3)],[20,30]);
-  for(const [tok,p,start,end] of [[token,file,-1,1],[token,file,0,5],[token,'../secret',0,1],['stale',file,0,1],[token,'cover.png',0,1]])await assert.rejects(lib.readWork(tok,p,start,end));
-  for(const resource of paths)await lib.write(token,resource,new Uint8Array(await readFile(join(fixture,resource))));
-  await lib.commit(token,{...source,id});assert.ok(!(await readdir(join(root,'scenes',id))).includes('.work'));
-  await assert.rejects(lib.readWork(token,file,0,1));
-  const cancelled=await lib.begin('scene-work-cancel');await lib.write(cancelled,file,new Uint8Array([1]));await lib.abort(cancelled);
-  assert.deepEqual(await readdir(join(root,'scenes')),[id]);
-});
 test('official default 512K file units are accepted, but ranges beyond actual SOG counts are rejected',async t=>{
   const {root,lib}=await setup(t),dir=join(root,'scenes','large-unit');await cp(fixture,dir,{recursive:true});
   const manifest=structuredClone(source),meta=JSON.parse(await readFile(join(dir,'lod/lod-meta.json'),'utf8'));
@@ -183,3 +172,4 @@ test('cover and exact camera pose publish together and survive a new Library ins
  assert.notEqual(second.manifest.cover,disk.cover);
  assert.ok(!(await readdir(dir)).includes(disk.cover));
 });
+

@@ -5,7 +5,7 @@ import {mkdir,mkdtemp,readFile,writeFile,cp,rename,rm,readdir,stat} from 'node:f
 import {tmpdir} from 'node:os';
 import {join,resolve,relative} from 'node:path';
 import {promisify} from 'node:util';
-const run=promisify(execFile),name='Portable-3DGS-Viewer-win32-x64',folder='Win';
+const run=promisify(execFile),name='ElectronSplat-win32-x64',folder='Win';
 // The packager staging directory contains runtime files only, never user data.
 const staged=resolve('.build/packages',name),output=resolve('desktop-transfer');
 await mkdir(output,{recursive:true});

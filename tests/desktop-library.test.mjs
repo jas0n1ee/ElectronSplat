@@ -172,4 +172,3 @@ test('cover and exact camera pose publish together and survive a new Library ins
  assert.notEqual(second.manifest.cover,disk.cover);
  assert.ok(!(await readdir(dir)).includes(disk.cover));
 });
-

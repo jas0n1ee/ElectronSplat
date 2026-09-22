@@ -22,7 +22,7 @@ for (const mode of ['cancel-next', 'quit', 'renderer-crash']) {
     await app.evaluate(({ dialog }) => { dialog.showErrorBox = () => {}; dialog.showMessageBoxSync = () => 1; });
     const start = id => page.evaluate(async ({ id, foreground }) => {
       const token = await window.portableDesktop.begin(id);
-      const result = await window.portableDesktop.runConversion({ token, id, foreground, options: { name: id, cellSize: 0.1, chunkSize: 65536, sh: 'sh0', scale: 1, rotation: [0, 0, 0], opacity: 0.1 } });
+      const result = await window.portableDesktop.runConversion({ token, id, name: id, foreground, options: { cellSize: 0.1, chunkSize: 65536, sh: 'sh0', scale: 1, rotation: [0, 0, 0], opacity: 0.1 } });
       return { token, pid: result.pid };
     }, { id, foreground: resolve('test-results/fixtures/render.ply') });
     const first = await start('scene-first');

@@ -57,7 +57,7 @@ npm run check
 npm test
 ```
 
-Packaging also uses `zip`, `unzip`, and `tar`. Build and sign macOS packages on a Mac with Xcode and its command-line tools installed.
+Packaging also uses `zip`, `unzip`, and `tar`. Building macOS packages requires a Mac with Xcode command-line tools installed.
 
 Build and package the required targets:
 
@@ -67,12 +67,7 @@ node scripts/package-desktop.mjs win32 x64
 node scripts/package-desktop.mjs darwin arm64
 ```
 
-Create the Windows ZIP with `npm run transfer:win`. On a Mac configured with a Developer ID identity and a notarization Keychain profile, sign and verify the macOS package before creating its ZIP:
-
-```bash
-node scripts/sign-macos.mjs --identity "<Developer ID Application identity>" --profile "<Keychain profile>"
-npm run transfer:mac -- arm64 --signed-release
-```
+Create the Windows ZIP with `npm run transfer:win`.
 
 ZIPs are written to `desktop-transfer/`. Scene data and generated builds are not committed to Git.
 

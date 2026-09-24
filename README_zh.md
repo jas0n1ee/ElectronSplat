@@ -57,7 +57,7 @@ npm run check
 npm test
 ```
 
-打包还需要 `zip`、`unzip` 和 `tar`。macOS 包的构建和签名应在安装了 Xcode 及其 command-line tools 的 Mac 上执行。
+打包还需要 `zip`、`unzip` 和 `tar`。构建 macOS 包需要安装了 Xcode command-line tools 的 Mac。
 
 构建并打包需要的平台：
 
@@ -67,12 +67,7 @@ node scripts/package-desktop.mjs win32 x64
 node scripts/package-desktop.mjs darwin arm64
 ```
 
-使用 `npm run transfer:win` 生成 Windows ZIP。在配置了 Developer ID identity 和 notarization Keychain profile 的 Mac 上，先签名并验证 macOS 包，再生成 ZIP：
-
-```bash
-node scripts/sign-macos.mjs --identity "<Developer ID Application identity>" --profile "<Keychain profile>"
-npm run transfer:mac -- arm64 --signed-release
-```
+使用 `npm run transfer:win` 生成 Windows ZIP。
 
 ZIP 输出到 `desktop-transfer/`。场景数据和构建产物不提交到 Git。
 

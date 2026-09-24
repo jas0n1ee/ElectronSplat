@@ -39,8 +39,6 @@ ElectronSplat/
 
 Copy complete scene folders into `scenes/` to add them to the library. LOD budgets range from 3M to 9M splats. Conversion produces official PlayCanvas streamed LOD/SOG (SH0) and voxel collision data. It halves the splat count for each additional LOD level, targeting a coarsest level below 9M splats, with a minimum of three and a maximum of 16 levels. The level count is recorded in the scene.
 
-The current Windows package is unsigned and has not been run or conversion-tested on Windows.
-
 ## Development
 
 Node.js 22.12+ is required. Install dependencies and run the app:

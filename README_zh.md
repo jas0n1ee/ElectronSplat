@@ -39,8 +39,6 @@ ElectronSplat/
 
 将完整场景文件夹复制到 `scenes/` 即可加入场景库。LOD budget 为 300 万至 900 万 splats。转换生成 PlayCanvas 官方 streamed LOD/SOG（SH0）和 voxel collision 数据；每增加一层，点数减半，目标是让最粗层低于 900 万 splats。层数至少 3 层、最多 16 层，并记录在场景里。
 
-当前 Windows 包未签名，也未在 Windows 上运行或测试转换。
-
 ## 开发
 
 需要 Node.js 22.12+。安装依赖并启动应用：

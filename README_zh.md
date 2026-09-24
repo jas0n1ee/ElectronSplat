@@ -22,9 +22,9 @@
 
 ## 下载与使用
 
-从 [GitHub Releases](https://github.com/jas0n1ee/ElectronSplat/releases) 下载压缩包。各版本说明列出可用平台、验证结果和已知限制；prerelease 用于测试。
+从 [GitHub Releases](https://github.com/jas0n1ee/ElectronSplat/releases) 下载压缩包。各版本说明列出可用平台和重要限制；prerelease 用于测试。
 
-1. 根据该版本的 `SHA256SUMS.txt` 校验压缩包。macOS 包在 APFS 等支持 symlink 的本地文件系统解压；Windows 包在本地文件系统解压。
+1. 根据该版本的 `SHA256SUMS.txt` 校验压缩包，然后解压 ZIP。
 2. macOS 打开 `ElectronSplat.app`，Windows 打开 `Win/ElectronSplat.exe`。
 3. 选择前景 PLY 和可选的背景 PLY，填写场景名称、选择 voxel 尺寸，再加入转换队列。
 4. 从场景库打开转换后的场景。使用 **WASD / QE** 移动，鼠标控制视角；保存首图也会保存起始 camera pose。
@@ -39,7 +39,7 @@ ElectronSplat/
 
 将完整场景文件夹复制到 `scenes/` 即可加入场景库。LOD budget 为 300 万至 900 万 splats。转换生成 PlayCanvas 官方 streamed LOD/SOG（SH0）和 voxel collision 数据；每增加一层，点数减半，目标是让最粗层低于 900 万 splats。层数至少 3 层、最多 16 层，并记录在场景里。
 
-安装前请查看所下载版本的 Release Notes，确认其签名与验证状态。当前 Windows 包未签名，也未通过 Windows 实机启动或转换验收。
+当前 Windows 包未签名，也未在 Windows 上运行或测试转换。
 
 ## 开发
 

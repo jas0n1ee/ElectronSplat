@@ -22,9 +22,9 @@ Conversion runs in a bundled Node process and requires a GPU supported by Dawn (
 
 ## Download and use
 
-Download an archive from [GitHub Releases](https://github.com/jas0n1ee/ElectronSplat/releases). Each release lists its available platforms, validation results, and known limitations. Prereleases are intended for testing.
+Download an archive from [GitHub Releases](https://github.com/jas0n1ee/ElectronSplat/releases). Each release lists its available platforms and important limitations. Prereleases are intended for testing.
 
-1. Verify the archive against the release's `SHA256SUMS.txt`. Extract the macOS archive onto a local filesystem that supports symlinks, such as APFS; extract the Windows archive onto a local filesystem.
+1. Verify the archive against the release's `SHA256SUMS.txt`, then extract the ZIP.
 2. Open `ElectronSplat.app` on macOS or `Win/ElectronSplat.exe` on Windows.
 3. Select a foreground PLY and an optional background PLY, enter a scene name, choose a voxel size, and add the scene to the conversion queue.
 4. Open a converted scene from the library. Move with **WASD / QE** and look with the mouse. Saving a cover also saves the starting camera pose.
@@ -39,7 +39,7 @@ ElectronSplat/
 
 Copy complete scene folders into `scenes/` to add them to the library. LOD budgets range from 3M to 9M splats. Conversion produces official PlayCanvas streamed LOD/SOG (SH0) and voxel collision data. It halves the splat count for each additional LOD level, targeting a coarsest level below 9M splats, with a minimum of three and a maximum of 16 levels. The level count is recorded in the scene.
 
-Check the signing and validation status in the notes for the release you download. The current Windows package is unsigned and has not had native startup or conversion validation.
+The current Windows package is unsigned and has not been run or conversion-tested on Windows.
 
 ## Development
 

@@ -6,12 +6,15 @@ export type SceneManifest = {
   createdAt: string; cover: string; collision: string; collisionFormat?: 'playcanvas-voxel'; bounds: Bounds;
   camera: CameraPose; cameraSource?: 'cover'; streams: { file: string; lodLevels: number; pointCount: number; background: boolean }[];
   resources: { file: string; bytes: number }[]; leafCount: number; pointCount: number; sourceBytes: number;
-  conversion: { method: string; chunkSize: number; sh: boolean; scale: number; rotation: V3 };
+  conversion: { method: string; chunkSize: number; sh: boolean; scale: number; rotation: V3; lodCeiling?: number };
 };
 export type ConvertOptions = {
   id: string; name: string; scale: number; rotation: V3;
   cellSize: number; opacity: number; sh: boolean;
   chunkSize: number;
+  // The viewer's largest splat budget: the converter halves the LOD chain until the coarsest level
+  // fits strictly below it, so this has to be the same number the viewer allocates against.
+  lodCeiling: number;
 };
 export type SceneRecord = {
   manifest: SceneManifest; files: Map<string, Blob>; saved: boolean;

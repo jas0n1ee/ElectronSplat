@@ -19,11 +19,15 @@ const html = (await readFile('src/index.html', 'utf8')).replace(/content="defaul
 await writeFile(`${out}/ui/index.html`, html);
 await copyFile('src/styles.css', `${out}/ui/assets/styles.css`);
 await copyFile('assets/icons/app.png', `${out}/ui/assets/app-icon.png`);
-for (const name of ['main.cjs','preload.cjs','library.cjs','paths.cjs','filelog.cjs','conversion-process.cjs']) await copyFile(`desktop/${name}`, `${out}/desktop/${name}`);
-// fix branch: the conversion child process (pure Node, ELECTRON_RUN_AS_NODE). The official libraries stay real packages shipped with the app,
+for (const name of ['main.cjs','preload.cjs','library.cjs','paths.cjs','conversion-process.cjs']) await copyFile(`desktop/${name}`, `${out}/desktop/${name}`);
+// The conversion child process runs as pure Node (ELECTRON_RUN_AS_NODE). The official libraries stay real packages shipped with the app,
 // so that path resolution for WorkerQueue.workerUrl / webp.wasm / the Dawn native library matches the official CLI.
 // Together with the transitive dependencies (webgpu→debug→ms, splat-transform→@adobe/spz), the child process cannot read asar.
 await copyFile('desktop/convert-child.mjs', `${out}/desktop/convert-child.mjs`);
+// The child imports this by relative path, and it runs as plain Node, which cannot read asar -- so it
+// is copied verbatim next to the child (add it to the asar.unpack list too, or the import fails only
+// in the packaged app).
+await copyFile('desktop/lod-levels.mjs', `${out}/desktop/lod-levels.mjs`);
 for (const dep of ['@playcanvas/splat-transform', 'webgpu', 'playcanvas', 'debug', 'ms', '@adobe/spz']) await cp(`node_modules/${dep}`, `${out}/node_modules/${dep}`, { recursive: true });
 await build({ entryPoints: ['src/manifest.ts'], outfile: `${out}/desktop/manifest.cjs`, bundle: true, platform: 'node', format: 'cjs', target: 'node22' });
 await writeFile(`${out}/package.json`, JSON.stringify({ name, productName:'ElectronSplat', version, description:'Offline 3DGS viewer and converter', main:'desktop/main.cjs', buildId, author, license, repository }, null, 2));

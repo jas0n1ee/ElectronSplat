@@ -9,10 +9,12 @@ import { readSceneFile } from './files';
 import { displayRotation, rotatePoint } from './coordinates';
 import { createViewerDevice } from './graphics';
 import { moveDelta } from './movement';
+import { lodBudgetVerdict } from './lod';
+import type { LodAdvice } from './lod';
 
-type StreamResource={octree:{environmentUrl?:string|null;lodLevels:number;files:{url:string;lodLevel:number}[];fileResources:Map<number,unknown>;nodes:{lods:{fileIndex:number}[]}[];assetLoader:{hasFailed?:(url:string)=>boolean}|null}};
+type StreamResource={octree:{environmentUrl?:string|null;lodLevels:number;files:{url:string;lodLevel:number}[];fileResources:Map<number,unknown>;nodes:{lods?:{fileIndex:number;count:number}[]}[];assetLoader:{hasFailed?:(url:string)=>boolean}|null}};
 type Loaded = {asset:pc.Asset;entity:pc.Entity;levels:number};
-export type ViewerStatus = {fps:number;points:number;chunks:number;total:number;renderer:string;level:number;omitted:number};
+export type ViewerStatus = {fps:number;points:number;chunks:number;total:number;renderer:string;level:number;omitted:number;levels:number;coarsest:number;pinned:boolean;advice:LodAdvice;detailedFrom:number};
 export class Viewer {
   app!:pc.Application;
   camera!:pc.Entity;
@@ -44,6 +46,9 @@ export class Viewer {
   private pending=new Set<()=>void>();
 
   private indexesLoading=true;
+  private streamLevels=0;
+  private streamCoarsest=0;
+  private lastVerdict='';
   private dragging=false;
   private lastX=0; private lastY=0;
   private elapsed=0; private frames=0;private fps=60;
@@ -129,7 +134,8 @@ export class Viewer {
     this.app.start();
     try {await Promise.all(this.scene.manifest.streams.map(stream=>this.loadStream(stream)));}
     finally {this.indexesLoading=false;}
-    log.add('info','scene.indexReady',{id:this.scene.manifest.id,streams:this.loaded.length,durationMs:performance.now()-start});
+    this.reportLod('index');
+    log.add('info','scene.indexReady',{id:this.scene.manifest.id,streams:this.loaded.length,levels:this.streamLevels,coarsest:this.streamCoarsest,durationMs:performance.now()-start});
   }
   private collides(position:V3):boolean {return !!this.collider?.querySphere(...rotatePoint(this.inverseCoordinateRotation,position),this.radius,{x:0,y:0,z:0});}
   private requestRender() {if(this.app){this.app.renderNextFrame=true;this.changedAt=performance.now();}}
@@ -143,6 +149,24 @@ export class Viewer {
     this.mode=mode;this.frameReady=false;this.readyLogged=false;this.changedAt=performance.now();
     if(this.app){this.app.scene.gsplat.splatBudget=this.budget;this.app.autoRender=true;this.requestRender();}
     log.add('info','lod.mode',{mode,budget:this.budget,foregroundPointCount:this.scene.manifest.pointCount});
+    this.reportLod('mode');
+  }
+  /** The scene's coarsest level, as the allocator computes it (GSplatLodTable.totalStartCount). */
+  private verdict() {
+    return lodBudgetVerdict({coarsest:this.streamCoarsest,budget:this.budget,ceiling:this.budgets[this.budgets.length-1],budgets:this.budgets});
+  }
+  /**
+   * One diagnostics line per (reason, mode, verdict), so the log shows whether a preset could actually
+   * upgrade this scene. `renderedPoints` is the only empirical evidence: a pinned preset draws the
+   * coarsest level, an upgrading one draws more than that.
+   */
+  private reportLod(reason:'index'|'mode'|'ready') {
+    if(!this.alive||!this.streamLevels||!this.streamCoarsest)return;
+    const v=this.verdict(),key=`${reason}:${this.mode}:${v.advice}`;
+    if(key===this.lastVerdict)return;
+    this.lastVerdict=key;
+    const settled=this.frameReady&&!this.loadingCount;
+    log.add(v.advice==='reconvert'?'warn':'info','lod.budget',{reason,mode:this.mode,budget:v.budget,ceiling:v.ceiling,levels:this.streamLevels,coarsest:v.coarsest,pinned:v.pinned,advice:v.advice,detailedFrom:v.detailedFrom,renderedPoints:settled?this.app?.stats.frame.gsplats??null:null});
   }
   private resident() {
     return this.loaded.flatMap(item=>{
@@ -153,14 +177,16 @@ export class Viewer {
   private residentLeaves() {
     return this.loaded.reduce((total,item)=>{
       const tree=(item.asset.resource as StreamResource)?.octree;
-      return total+(tree?.nodes.filter(n=>n.lods.some(l=>tree.fileResources.has(l.fileIndex))).length??0);
+      return total+(tree?.nodes.filter(n=>n.lods?.some(l=>tree.fileResources.has(l.fileIndex))).length??0);
     },0);
   }
   snapshot() {
+    const v=this.verdict();
     return {
       onDemand:this.app?.autoRender===false,renderedFrames:this.renderedFrames,centersEnabled:this.app?.scene.gsplatCentersEnabled,lodMode:this.app?.scene.gsplat.lodMode,
       pose:structuredClone(this.pose),collision:this.collision,collisionRadius:this.radius,renderer:this.app?.graphicsDevice.deviceType,
       loading:this.indexesLoading||this.coarse||!this.frameReady||this.loadingCount>0,loadingCount:this.loadingCount,coarse:this.coarse,mode:this.mode,budget:this.budget,
+      levels:this.streamLevels,coarsest:this.streamCoarsest,pinned:v.pinned,advice:v.advice,detailedFrom:v.detailedFrom,
       renderResolution:{width:this.canvas.width,height:this.canvas.height,cssWidth:this.canvas.clientWidth,cssHeight:this.canvas.clientHeight,pixelRatio:devicePixelRatio},sourceUp:'z',displayRotation:[90,0,180],points:this.app?.stats.frame.gsplats??0,
       loaded:this.resident(),format:'playcanvas-streamed-sog',error:this.streamError
     };
@@ -187,7 +213,8 @@ export class Viewer {
       this.app.scene.gsplat.dirty=true;
     } else if(!this.readyLogged&&performance.now()-this.changedAt>=600) {
       this.readyLogged=true;this.app.autoRender=false;
-      log.add('info','scene.ready',{id:this.scene.manifest.id,durationMs:performance.now()-this.startedAt,mode:this.mode,budget:this.budget,points:this.app.stats.frame.gsplats,residentFiles:this.resident().length});
+      log.add('info','scene.ready',{id:this.scene.manifest.id,durationMs:performance.now()-this.startedAt,mode:this.mode,budget:this.budget,points:this.app.stats.frame.gsplats,levels:this.streamLevels,coarsest:this.streamCoarsest,residentFiles:this.resident().length});
+      this.reportLod('ready');
     }
   }
   reset() {
@@ -254,7 +281,8 @@ export class Viewer {
     }
     if(this.elapsed>=1) {
       this.fps=Math.round(this.frames/this.elapsed);this.elapsed=0;this.frames=0;
-      this.onStatus({fps:this.fps,points:this.app.stats.frame.gsplats,chunks:this.residentLeaves(),total:this.scene.manifest.leafCount,renderer:this.app.graphicsDevice.deviceType,level:this.mode,omitted:0});
+      const v=this.verdict();
+      this.onStatus({fps:this.fps,points:this.app.stats.frame.gsplats,chunks:this.residentLeaves(),total:this.scene.manifest.leafCount,renderer:this.app.graphicsDevice.deviceType,level:this.mode,omitted:0,levels:this.streamLevels,coarsest:this.streamCoarsest,pinned:v.pinned,advice:v.advice,detailedFrom:v.detailedFrom});
     }
 
   }
@@ -276,6 +304,11 @@ export class Viewer {
       const meta=response?JSON.parse(await response.text()):null;
       log.add('info','lod.errors',{file:stream.file,measured:meta?.lodErrors===true,mode:'error',fallback:meta?.lodErrors?'none':'official-count-derived'});
       if(resource.octree?.lodLevels!==stream.lodLevels)throw new Error('官方 LOD 层数与场景清单不一致。');
+      // The allocator pins a scene when the per-node coarsest-level counts sum to the budget; a node with
+      // no splats at that level contributes 0, so this sum is that total (GSplatLodTable.totalStartCount).
+      const coarsestLevel=stream.lodLevels-1;
+      this.streamLevels=Math.max(this.streamLevels,stream.lodLevels);
+      this.streamCoarsest+=resource.octree.nodes.reduce((total,node)=>total+(node.lods?.[coarsestLevel]?.count??0),0);
       const entity=new pc.Entity(stream.background?'background':'foreground');
       entity.setEulerAngles(0,0,180); // Official writer bakes geometry and tree into PLY space.
       entity.addComponent('gsplat',{asset,unified:true,lodRangeMin:stream.lodLevels-1,lodRangeMax:stream.lodLevels-1});

@@ -40,10 +40,16 @@ const RUNTIMES = {
 
 const cache = '.build/node-runtime';
 
-// unzip -p / tar -xO write the member straight to stdout, avoiding the few hundred MB of
+// tar -xO / unzip -p write the member straight to stdout, avoiding the few hundred MB of
 // intermediate artifacts that unpacking the whole archive would leave behind.
+//
+// Which unpacker depends on both the archive and the host: GNU tar cannot read zip, so Linux and macOS
+// use unzip for those, while Windows has no unzip at all and its bundled bsdtar reads zip as well as
+// tar (tar --version reports bsdtar there). All three platforms are built on macOS; the Windows branch
+// only keeps a Windows host from dying with `spawnSync unzip ENOENT`, which is what it did before, and
+// does not make a Windows build a supported path.
 const readMember = (archive, entry) =>
-  /\.zip$/.test(archive)
+  /\.zip$/.test(archive) && process.platform !== 'win32'
     ? execFileSync('unzip', ['-p', archive, entry], { maxBuffer: 1 << 30 })
     : execFileSync('tar', ['-xOf', archive, entry], { maxBuffer: 1 << 30 });
 

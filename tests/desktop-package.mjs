@@ -1,5 +1,6 @@
 import { listPackage, extractFile } from '@electron/asar';
 import { mkdir,writeFile,readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
 const packages=[];let reference;
@@ -13,15 +14,20 @@ for(const name of targets.length?targets:['win32-x64','darwin-arm64']){
   // and unpacked on purpose. Keep forbidding private material, and pin the dependency set separately
   // so an accidentally bundled package still fails.
   assert.ok(!files.some(f=>/goal\.md|TEST_REPORT|scene-resources|\.ply$|\.sog$|logs\/|scenes\.js/.test(f)));
+  assert.ok(!files.some(f=>f.replaceAll('\\','/').endsWith('/desktop/filelog.cjs')));
+  // The child process runs as plain Node, which cannot read asar, so every file it imports has to be
+  // unpacked too -- a missing one only shows up as a dead conversion in the packaged app.
+  for(const file of ['convert-child.mjs','lod-levels.mjs'])assert.ok(existsSync(join(asar+'.unpacked','desktop',file)),`${name}: desktop/${file} is not unpacked`);
+  // @electron/asar lists entries with the host's separators, so a Windows run has to be normalized
+  // first -- otherwise every path misses and the dependency set comes back empty, which reads as a
+  // failure of the artifact rather than of this check.
   const bundledDeps=new Set();
-  for(const file of files){const found=/^\/node_modules\/(@[^/]+\/[^/]+|[^@][^/]*)/.exec(file);if(found)bundledDeps.add(found[1]);}
+  for(const file of files){const found=/^\/node_modules\/(@[^/]+\/[^/]+|[^@][^/]*)/.exec(file.split('\\').join('/'));if(found)bundledDeps.add(found[1]);}
   assert.deepEqual([...bundledDeps].sort(),['@adobe/spz','@playcanvas/splat-transform','debug','ms','playcanvas','webgpu']);
   assert.equal(JSON.parse(extractFile(asar,'package.json')).version,expectedVersion);
   if(reference){
     assert.deepEqual(JSON.parse(extractFile(asar,'package.json')),JSON.parse(extractFile(reference,'package.json')));
-    // The in-renderer conversion worker is gone (612fe91): converter.js and splat-worker.mjs no longer
-    // ship, and filelog.cjs plus the child-process entry point took their place.
-    for(const file of ['desktop/main.cjs','desktop/preload.cjs','desktop/manifest.cjs','desktop/library.cjs','desktop/paths.cjs','desktop/filelog.cjs','desktop/conversion-process.cjs','desktop/convert-child.mjs','ui/index.html','ui/assets/app.js','ui/assets/styles.css','ui/assets/app-icon.png'])assert.ok(extractFile(asar,file).equals(extractFile(reference,file)),`${name}: ${file} differs`);
+    for(const file of ['desktop/main.cjs','desktop/preload.cjs','desktop/manifest.cjs','desktop/library.cjs','desktop/paths.cjs','desktop/conversion-process.cjs','desktop/convert-child.mjs','desktop/lod-levels.mjs','ui/index.html','ui/assets/app.js','ui/assets/styles.css','ui/assets/app-icon.png'])assert.ok(extractFile(asar,file).equals(extractFile(reference,file)),`${name}: ${file} differs`);
   }else reference=asar;
   const licenseRoot=join(root,mac?'ElectronSplat.app/Contents/Resources/licenses':'licenses');
   for(const file of ['LICENSE','THIRD_PARTY_NOTICES.md','THIRD-PARTY-LICENSES.txt','LIBWEBP-LICENSE.txt']){

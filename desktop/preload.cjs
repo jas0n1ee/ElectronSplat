@@ -17,7 +17,5 @@ contextBridge.exposeInMainWorld('portableDesktop', {
   pathForFile: file => webUtils.getPathForFile(file),
   runConversion: payload => invoke('run-child', payload),
   cancelConversion: token => invoke('cancel-child', token),
-  onConversionEvent: cb => ipcRenderer.on('portable:conversion-event', (_event, message) => cb(message)),
-  // fix branch only: renderer logs land on disk in real time, see desktop/filelog.cjs.
-  logLine: entry => ipcRenderer.send('portable:log', entry)
+  onConversionEvent: cb => ipcRenderer.on('portable:conversion-event', (_event, message) => cb(message))
 });

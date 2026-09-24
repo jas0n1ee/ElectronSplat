@@ -5,6 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { auditRuntimeLinks, copyRuntimeDirectory } from '../scripts/runtime-copy.mjs';
 
+// Windows returns a symlink target with backslashes even when the link was created with a POSIX one
+// (Node normalizes on read), so the expected target is compared in POSIX form: the product preserves
+// whatever the bundle carried, and a macOS framework link is written POSIX.
+const posixTarget=value=>value.split('\\').join('/');
+
 async function fixture(t) {
   const root=await mkdtemp(join(tmpdir(),'portable-runtime-'));
   t.after(()=>rm(root,{recursive:true,force:true}));
@@ -21,7 +26,7 @@ test('runtime copy remains readable after the build directory is removed and the
   const {root,src,out,framework}=await fixture(t);
   await copyRuntimeDirectory(src,out);
   assert.equal(await readlink(join(out,framework,'Versions','Current')),'A');
-  assert.equal(await readlink(join(out,framework,'Example')),'Versions/Current/Example');
+  assert.equal(posixTarget(await readlink(join(out,framework,'Example'))),'Versions/Current/Example');
   await rm(src,{recursive:true});
   const moved=join(root,'Another Mac');await rename(out,moved);
   assert.equal(await readFile(join(moved,framework,'Example'),'utf8'),'runtime bytes');
@@ -37,7 +42,7 @@ test('runtime update replaces old absolute links without touching their targets 
   await writeFile(join(out,'Viewer.app','obsolete'),'old runtime');
   await copyRuntimeDirectory(src,out);
   assert.equal(await readFile(join(src,framework,'Example'),'utf8'),'runtime bytes');
-  assert.equal(await readlink(join(out,framework,'Example')),'Versions/Current/Example');
+  assert.equal(posixTarget(await readlink(join(out,framework,'Example'))),'Versions/Current/Example');
   assert.equal(await readFile(join(out,'scenes','keep'),'utf8'),'user data');
   assert.equal(await readFile(join(out,'.portable-profile','keep'),'utf8'),'user settings');
   await assert.rejects(readFile(join(out,'Viewer.app','obsolete')));

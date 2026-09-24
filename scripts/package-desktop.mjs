@@ -14,7 +14,7 @@ if (!['win32','darwin','linux'].includes(platform) || !['x64','arm64'].includes(
 // needs WebGPU or the WebGL2 fallback, as on every other platform.
 if(platform==='darwin'&&arch!=='arm64')throw new Error('Intel Mac is no longer supported. Use darwin arm64.');
 const icon = platform==='darwin'?'assets/icons/app.icns':platform==='win32'?'assets/icons/app.ico':undefined;
-// fix branch: the conversion child process runs as pure Node (ELECTRON_RUN_AS_NODE) and cannot read asar,
+// The conversion child process runs as pure Node (ELECTRON_RUN_AS_NODE) and cannot read asar,
 // so the child process entry point and the three packages it imports must be unpacked wholesale; the Dawn native library ships only the target platform.
 const dawnDist='.build/electron/node_modules/webgpu/dist';
 const dawnSrc='node_modules/webgpu/dist';
@@ -26,7 +26,7 @@ const keep=new Set([wanted,...(platform==='win32'?['d3dcompiler_47.dll']:[])]);
 await mkdir(dawnDist,{recursive:true});
 await copyFile(join(dawnSrc,wanted),join(dawnDist,wanted));
 for (const f of await readdir(dawnDist)) if (!keep.has(f)) await rm(join(dawnDist,f),{force:true});
-const paths = await packager({ icon, dir: '.build/electron', out: '.build/packages', name: 'ElectronSplat', executableName: 'ElectronSplat', appBundleId: 'com.electronsplat.desktop', platform, arch, electronVersion: pkg.devDependencies.electron, appVersion: pkg.version, asar: { unpack: '**/convert-child.mjs', unpackDir: 'node_modules' }, overwrite: true, prune: false, download: { quiet: true } });
+const paths = await packager({ icon, dir: '.build/electron', out: '.build/packages', name: 'ElectronSplat', executableName: 'ElectronSplat', appBundleId: 'com.electronsplat.desktop', platform, arch, electronVersion: pkg.devDependencies.electron, appVersion: pkg.version, asar: { unpack: '**/{convert-child,lod-levels}.mjs', unpackDir: 'node_modules' }, overwrite: true, prune: false, download: { quiet: true } });
 for (const staged of paths) {
   // Official Node runtime for the conversion child process (Electron's V8 sandbox forbids Dawn's GPU
   // readback, see the header comment in fetch-node.mjs). Placed beside the app resources, not inside

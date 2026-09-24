@@ -11,16 +11,14 @@
 //
 // The conversion itself is entirely the official library -- readPly, processSource/filterBands,
 // decimateSource, writeSource, stackLods, writeLodSource, writeVoxel. What lives here is only the
-// file I/O adapter and the call order, which is the same shape as scripts/offline-convert.mjs.
+// file I/O adapter and the call order.
 //
 // Wire protocol: the payload arrives as JSON on stdin; progress goes back over process.send.
-// Every stage also appends a line to PORTABLE_CHILD_LOG, so a child that dies before IPC is up
-// can still be located on disk.
-import { appendFileSync, openSync, closeSync, readSync, writeSync, statSync, mkdirSync, existsSync, rmSync } from 'node:fs';
+import { openSync, closeSync, readSync, writeSync, statSync, mkdirSync, existsSync, rmSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { MIN_LOD_LEVELS, coarsestAt, planLodLevels } from './lod-levels.mjs';
 
-const logFile = process.env.PORTABLE_CHILD_LOG;
 // If the app crashes, do not keep processing an orphaned transaction.
 if (process.send) process.once('disconnect', () => process.exit(1));
 // process.send is asynchronous: the message sits on the IPC channel until the loop writes it out.
@@ -32,7 +30,6 @@ const send = (message, flushed) => {
   flushed?.();
 };
 const stage = (name, data) => {
-  if (logFile) { try { appendFileSync(logFile, JSON.stringify({ time: new Date().toISOString(), stage: name, ...(data === undefined ? {} : { data }) }) + '\n'); } catch {} }
   if (name !== 'progress') send({ type: 'log', event: `child.${name}`, data });
 };
 process.on('uncaughtException', e => { stage('uncaught', String(e?.stack || e)); send({ type: 'error', message: `转换进程异常：${e?.message ?? e}`, stack: String(e?.stack || '') }); setTimeout(() => process.exit(1), 50).unref?.(); });
@@ -52,6 +49,11 @@ const run = async (job) => {
   const cellSize = [0.1, 0.2, 0.5].includes(options?.cellSize) ? options.cellSize : 0.1;
   const rotation = options?.rotation ?? [90, 0, 180];
   const shBands = Math.max(0, Math.min(3, Number(options?.shBands ?? 0) || 0));
+  // Required rather than defaulted: this is the viewer's largest splat budget, and a wrong value here
+  // silently ships a scene that the allocator pins at every preset. The renderer owns the number
+  // (src/lod.ts LOD_CEILING) and passes it per job, so the child keeps no copy of its own.
+  const lodCeiling = options?.lodCeiling;
+  if (!Number.isSafeInteger(lodCeiling) || lodCeiling < 1) throw new Error('转换参数缺少有效的 LOD 预算上限。');
   const opts = { scale: 1, rotation, cellSize, opacity: 0.25, sh: shBands > 0, chunkSize: 32768 };
 
   stage('boot', { node: process.version, platform: process.platform, arch: process.arch, id });
@@ -142,7 +144,7 @@ const run = async (job) => {
 
   // Progress is reported as phase + fraction-within-phase, never as an overall number: the
   // renderer owns the work-weighted model that turns phases into one bar, because that bar is UI.
-  let phase = 'decimate', levelBase = 0, levelSpan = 1;
+  let phase = 'decimate', levelBase = 0, levelSpan = 1, plannedLevels = 0, currentLevel = 0;
   const phaseOf = (name) => {
     if (name === 'chunking') return 'partition';
     if (name === 'lod errors') return 'errors';
@@ -152,10 +154,15 @@ const run = async (job) => {
   // The stage label stays the product's own wording; the library's internal name for the bar
   // becomes the detail line, where it is useful rather than a replacement for the Chinese label.
   const LABEL = { decimate: '生成 LOD', partition: '划分 LOD 空间', errors: '评估 LOD 图像误差', encode: '压缩 SOG', voxel: '生成官方体素' };
+  // The level index rides on the decimation headline rather than the detail line: the official library
+  // emits a bar tick every few hundred milliseconds and each of those replaces the detail, so a level
+  // note there is only ever visible for an instant. Both are 0 until the source header is read.
+  const stageLabel = (phase) => (phase === 'decimate' && plannedLevels > 0 && currentLevel > 0)
+    ? `${LABEL.decimate}（第 ${currentLevel} 层 / 共 ${plannedLevels} 层）` : LABEL[phase];
   const report = (name, fraction, detail) => {
     phase = phaseOf(name);
     const value = Number.isFinite(fraction) ? Math.min(1, Math.max(0, fraction)) : 0;
-    send({ type: 'progress', phase, stage: LABEL[phase], detail: detail ?? name, fraction: levelSpan < 1 ? levelBase + value * levelSpan : value });
+    send({ type: 'progress', phase, stage: stageLabel(phase), detail: detail ?? name, fraction: levelSpan < 1 ? levelBase + value * levelSpan : value });
   };
   logger.setRenderer({ handle(event) {
     if (event.kind === 'scopeStart') {
@@ -197,7 +204,16 @@ const run = async (job) => {
   const level0 = await openInput('foreground.ply');
   const totalPoints = level0.meta.numGaussians;
   if (!totalPoints) throw new Error('前景没有有效 Gaussian，无法创建场景。');
-  stage('foreground', { points: totalPoints, shBands });
+  // The level count follows the source size: the chain halves until the coarsest level lands strictly
+  // below the largest preset's budget, which is what leaves the allocator room to upgrade nodes there.
+  const lodLevels = planLodLevels(totalPoints, lodCeiling);
+  const plannedCoarsest = coarsestAt(totalPoints, lodLevels);
+  plannedLevels = lodLevels;
+  stage('foreground', { points: totalPoints, shBands, lodLevels, lodCeiling, coarsestPoints: plannedCoarsest });
+  // Defensive: only a source beyond ~2.9e11 points can exhaust MAX_LOD_LEVELS, but a scene that cannot
+  // fit the ceiling must be recorded rather than shipped silently -- the viewer flags it as needing a
+  // re-conversion.
+  if (plannedCoarsest >= lodCeiling) stage('lod.ceilingUnreachable', { points: totalPoints, ceiling: lodCeiling, levels: lodLevels, coarsest: plannedCoarsest });
 
   const decimateLevel = async (source, target, level) => {
     const budget = 128 * 1024 * 1024;
@@ -217,13 +233,19 @@ const run = async (job) => {
     return readPly(await readFs.createSource(`.work/level-${level}.ply`), pool);
   };
   const levels = [level0];
-  const LEVELS = 2;
-  for (let i = 1; i <= LEVELS; i++) {
-    levelBase = (i - 1) / LEVELS; levelSpan = 1 / LEVELS;
-    report('生成 LOD', 0, `第 ${i} 层 → ${Math.max(1, Math.ceil(totalPoints / 2 ** i)).toLocaleString()} 点`);
-    const level = await decimateLevel(levels[i - 1], Math.max(1, Math.ceil(totalPoints / 2 ** i)), i);
+  const decimations = lodLevels - 1;
+  for (let i = 1; i <= decimations; i++) {
+    const previous = levels[i - 1].meta.numGaussians;
+    const target = coarsestAt(totalPoints, i + 1);
+    // A decimation that cannot shrink the level any further stops being a level. Giving up on the
+    // ceiling is only allowed once the minimum chain exists, so small scenes keep the 3 levels --
+    // and the 100/50/25 ratios -- they have today.
+    if (i > MIN_LOD_LEVELS - 1 && target >= previous) { stage('lod.noProgress', { level: i + 1, of: lodLevels, points: previous, target }); break; }
+    levelBase = (i - 1) / decimations; levelSpan = 1 / decimations; currentLevel = i + 1;
+    report('生成 LOD', 0, `第 ${i + 1}/${lodLevels} 层 → ${target.toLocaleString()} 点`);
+    const level = await decimateLevel(levels[i - 1], target, i);
     levels.push(level);
-    stage('level.staged', { level: i, points: level.meta.numGaussians });
+    stage('level.staged', { level: i, of: lodLevels, points: level.meta.numGaussians });
   }
   levelBase = 0; levelSpan = 1;
   const envSource = hasBackground ? await openInput('background.ply') : null;
@@ -322,20 +344,22 @@ const run = async (job) => {
   // threads first. The process exits moments later regardless, and that is what tears the threads
   // down. This was intermittently silent: it depends on whether anything was outstanding.
   const workers = { inline: WorkerQueue.isInline, maxWorkers: WorkerQueue.maxWorkers };
+  // levels.length, not lodLevels: the no-progress guard can end the chain early, and the reported
+  // count has to be the one that was actually written.
+  const coarsestPoints = levels[levels.length - 1].meta.numGaussians;
 
-  return { stats: { workers }, manifest: {
+  return { stats: { workers, lodLevels: levels.length, lodCeiling, coarsestPoints }, manifest: {
     format: 'portable-3dgs', version: 2, id, name, createdAt: new Date().toISOString(),
     cover: 'cover.png', collision: 'collision/scene.voxel.json', collisionFormat: 'playcanvas-voxel',
     bounds, camera: { position: [0, 1.4, 0], yaw: 0, pitch: 0 },
     streams, resources, leafCount, pointCount: totalPoints,
     sourceBytes: statSync(foreground).size + (hasBackground ? statSync(background).size : 0),
-    conversion: { method: 'official-streamed-decimate-lod-sog', chunkSize: opts.chunkSize, sh: opts.sh, shBands, scale: opts.scale, rotation }
+    conversion: { method: 'official-streamed-decimate-lod-sog', chunkSize: opts.chunkSize, sh: opts.sh, shBands, scale: opts.scale, rotation, lodCeiling }
   }, preview };
 };
 
-// The exit code and PORTABLE_CHILD_LOG both have to carry failure, not just the IPC message: a
-// child whose error only reached process.send would vanish without trace if IPC were unavailable,
-// and the app would then wait on a conversion that is already dead.
+// The exit code must carry failure even if IPC is unavailable, so the parent cannot
+// mistake a failed conversion for a completed one.
 // The timer keeps the loop alive on purpose: exiting on an unref'd one is what discarded the
 // manifest. The callback normally wins the race; this is the backstop.
 const finish = code => setTimeout(() => process.exit(code), 2000);

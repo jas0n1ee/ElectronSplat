@@ -16,6 +16,7 @@
     "transfer:win": "node scripts/package-windows-transfer.mjs",
     "icons": "node scripts/build-icons.mjs",
     "test:large": "node tests/large-file.mjs",
+    "test:levels": "node tests/conversion-levels.mjs",
     "test:package": "node tests/desktop-package.mjs",
     "test:startup": "node tests/conversion-startup.mjs",
     "test:batch": "node tests/conversion-batch.mjs",

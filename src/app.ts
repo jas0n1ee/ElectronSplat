@@ -2,7 +2,7 @@ import { log } from './log';
 import { APP_VERSION, APP_BUILD } from './version';
 import { download, sceneBytes } from './files';
 import { desktop, diskScene, type ChildMessage } from './desktop';
-import { DESKTOP_LOD_BUDGETS } from './lod';
+import { DESKTOP_LOD_BUDGETS, LOD_CEILING } from './lod';
 import { DISPLAY_ROTATION } from './coordinates';
 import { Viewer } from './viewer';
 import { WebGpuInitError } from './graphics';
@@ -64,7 +64,7 @@ function renderLibrary() {
     const title=document.createElement('h2');title.textContent=s.name;
     content.append(title);open.append(img,enter,content);open.addEventListener('click',()=>{void openScene(record).catch(report);});
     const meta=document.createElement('div');meta.className='scene-meta';const info=document.createElement('span');
-    info.textContent=`${(s.pointCount/10000).toFixed(1)} 万点 · ${bytes(sceneBytes(record))}`;
+    info.textContent=`${(s.pointCount/10000).toFixed(1)} 万点 · ${s.streams[0].lodLevels} 层 LOD · ${bytes(sceneBytes(record))}`;
     const actions=document.createElement('div');actions.className='scene-actions';
     for(const [label,css,action] of [
       ['打开数据文件夹','scene-folder',async()=>{if(desktop&&record.nativeToken)await desktop.openSceneFolder(record.nativeToken);}],
@@ -126,9 +126,20 @@ async function openScene(record:SceneRecord,forceWebgl=false,pose?:CameraPose, s
       queueMicrotask(()=>{if(viewer===current)void openScene(record,true,current.pose,{mode:current.mode,speed:current.speed,collision:current.collision}).then(()=>toast('已切换到 WebGL2。WebGPU 错误已记录，可继续浏览。',false,10000)).catch(report);});
     }else{show('viewer-loading',false);toast(`${message} 请返回场景库重新打开，详情见诊断日志。`,true,15000);}
   };
+  let lodNoticeShown=false;
+  const wan=(points:number)=>`${(points/10000).toFixed(1)} 万`;
+  const preset=(mode:number)=>mode?'第 '+mode+' 档':'默认档';
   current.onStatus=s=>{
     if(viewer!==current)return;
-    $('viewer-stats').textContent=`${s.renderer.toUpperCase()} · ${s.fps===0?'静止 · 按需渲染':`${s.fps} FPS`} · ${(s.points/10000).toFixed(1)} 万点 · ${s.chunks}/${s.total} 块 · LOD ${s.level||'默认'} · ${current.canvas.width}×${current.canvas.height}${s.omitted?` · 预算限制隐藏 ${s.omitted} 块`:''}`;
+    // A pinned preset is expected when the budget sits below the scene's coarsest level, and only a
+    // coarsest level that reaches the ceiling itself is a defect worth re-converting for.
+    const pinned=s.advice==='expected'?` · 本档已到最粗层（${wan(s.coarsest)}点 ≥ 本档 ${wan(DESKTOP_LOD_BUDGETS[s.level])}点预算）${s.detailedFrom>=0?`，切到${preset(s.detailedFrom)}可见更细层`:''}`:s.advice==='reconvert'?` · LOD 层数不足，建议重新转换`: '';
+    const levels=s.levels?`（${s.levels} 层）`:'';
+    $('viewer-stats').textContent=`${s.renderer.toUpperCase()} · ${s.fps===0?'静止 · 按需渲染':`${s.fps} FPS`} · ${(s.points/10000).toFixed(1)} 万点 · ${s.chunks}/${s.total} 块 · LOD ${s.level||'默认'}${levels} · ${current.canvas.width}×${current.canvas.height}${s.omitted?` · 预算限制隐藏 ${s.omitted} 块`:''}${pinned}`;
+    if(!lodNoticeShown&&s.advice==='reconvert'){
+      lodNoticeShown=true;
+      toast(`此场景的 LOD 层数不足：最粗层 ${wan(s.coarsest)}点仍不低于 ${wan(LOD_CEILING)}点上限，所有档位都无法增加细节。请用当前版本重新转换。`,true,15000);
+    }
     $<HTMLOptionElement>('render-auto').textContent=`自动 · ${s.renderer.toUpperCase()}`;
     if(s.chunks)show('viewer-loading',false);
   };
@@ -204,7 +215,7 @@ async function startConversion() {
   const id=`scene-${Date.now().toString(36)}-${Array.from(crypto.getRandomValues(new Uint8Array(4)),v=>v.toString(16).padStart(2,'0')).join('')}`;
   const cellSize=Number(document.querySelector<HTMLInputElement>('input[name="voxel-size"]:checked')?.value);
   if(![0.1,0.2,0.5].includes(cellSize))throw new Error('请选择提取尺寸。');
-  const options:ConvertOptions={id,name:input('scene-name').value.trim(),scale:1,rotation:[...DISPLAY_ROTATION],cellSize,opacity:0.25,sh:false,chunkSize:32768};
+  const options:ConvertOptions={id,name:input('scene-name').value.trim(),scale:1,rotation:[...DISPLAY_ROTATION],cellSize,opacity:0.25,sh:false,chunkSize:32768,lodCeiling:LOD_CEILING};
   log.add('info','conversion.queued',{id,name:options.name,foreground:{name:foreground.name,size:foreground.size},background:background?{name:background.name,size:background.size}:null,cellSize});
   queue.enqueue(id,options.name,{foreground,background,options});
   input('foreground').value='';input('foreground').required=true;input('background').value='';input('scene-name').value='';
@@ -220,12 +231,9 @@ async function runConversion(job:ConversionJob<ConversionInput>,signal:AbortSign
   const completion={promise:new Promise<void>((resolve,reject)=>{resolveCompletion=resolve;rejectCompletion=reject;}),resolve:()=>resolveCompletion(),reject:(error:unknown)=>rejectCompletion(error)};
   void completion.promise.catch(()=>{});
   let beginPending:Promise<string>|undefined;
-  let lastProgressLog=start;
   const update=(stage:string,detail:string,fraction?:number)=>{
     lastProgress=performance.now();
-    if(job.stage!==stage){log.add('info','conversion.stage',{id,stage,detail});lastProgressLog=lastProgress;}
-    // fix branch only: throttle progress-detail logging to once every 5 seconds within a stage, so a hang still shows how far it got.
-    else if(lastProgress-lastProgressLog>5000){lastProgressLog=lastProgress;log.add('info','conversion.progress',{id,stage,detail,fraction});}
+    if(job.stage!==stage)log.add('info','conversion.stage',{id,stage,detail});
     queue.update(job,stage,detail,fraction);
   };
   $('progress-time').textContent='正在准备本场景转换…';
@@ -235,11 +243,6 @@ async function runConversion(job:ConversionJob<ConversionInput>,signal:AbortSign
   const timer=setInterval(()=>{
     const secs=Math.round((performance.now()-start)/1000),idle=Math.round((performance.now()-lastProgress)/1000);
     $('progress-time').textContent=`已用时 ${Math.floor(secs/60)} 分 ${secs%60} 秒 · 已生成 ${bytes(outputBytes)}${idle>20?` · 当前步骤已计算 ${idle} 秒，可随时取消`:' · 请保持页面打开'}`;
-    // fix branch only: 10-second heartbeat including heap memory, so when it hangs the file shows the last point it was still alive at.
-    if(secs%10===0){
-      const heap=(performance as Performance & {memory?:{usedJSHeapSize:number}}).memory?.usedJSHeapSize;
-      log.add('info','conversion.heartbeat',{id,stage:job.stage,detail:job.detail,progress:Math.round(job.progress*1000)/10,outputBytes,heapMB:heap?Math.round(heap/1048576):null});
-    }
   },1000);
   const fail=(error:unknown)=>{
     if(current!==generation)return;
@@ -300,7 +303,7 @@ async function runConversion(job:ConversionJob<ConversionInput>,signal:AbortSign
       log.add('info','conversion.complete',{id,...stats});
       const approx=stats as {invalid?:number;coarsenings?:number;clippedSplats?:number;cellSize?:number};
       if(approx.invalid||approx.coarsenings||approx.clippedSplats)log.add('warn','conversion.approximations',{invalidRows:approx.invalid,voxelCoarsenings:approx.coarsenings,clippedSplats:approx.clippedSplats,effectiveCellSize:approx.cellSize});
-      toast(`场景已生成：${(manifest.pointCount/10000).toFixed(1)} 万点，${manifest.leafCount} 个空间块。已保存到 scenes 文件夹，可直接打开。`,false,14000);
+      toast(`场景已生成：${(manifest.pointCount/10000).toFixed(1)} 万点，${manifest.streams[0].lodLevels} 层 LOD，${manifest.leafCount} 个空间块。已保存到 scenes 文件夹，可直接打开。`,false,14000);
       completion.resolve();
       $('library-info').textContent=`最近生成：${manifest.name} · 碰撞尺寸 ${approx.cellSize??options.cellSize} 米${approx.invalid?` · 已移除 ${approx.invalid} 个无效点`:''}`;
     };
@@ -322,7 +325,7 @@ async function runConversion(job:ConversionJob<ConversionInput>,signal:AbortSign
     const clearChildBoot=()=>clearTimeout(childBoot);
     signal.addEventListener('abort',clearChildBoot,{once:true});
     update('启动转换进程','正在启动转换进程…',.02);
-    log.add('info','conversion.start',{runner:'node',foregroundPath,backgroundPath:backgroundPath??null,foregroundBytes:foreground.size,backgroundBytes:background?.size??0,options,output:'child-process'});
+    log.add('info','conversion.start',{runner:'node',foregroundBytes:foreground.size,backgroundBytes:background?.size??0,options,lodCeiling:LOD_CEILING,output:'child-process'});
     let pendingManifest:{manifest:SceneManifest;preview:number[][];stats:Record<string,unknown>}|undefined;
     childEventHandler=(msg:ChildMessage)=>{
       clearChildBoot();
@@ -348,8 +351,8 @@ async function runConversion(job:ConversionJob<ConversionInput>,signal:AbortSign
       }
     };
     void disk.runConversion({token,id,name:options.name,foreground:foregroundPath,background:backgroundPath,
-      options:{scale:options.scale,rotation:options.rotation,cellSize:options.cellSize,shBands:0,chunkSize:options.chunkSize}})
-      .then(({childLog})=>log.add('info','conversion.childSpawned',{childLog}))
+      options:{scale:options.scale,rotation:options.rotation,cellSize:options.cellSize,shBands:0,chunkSize:options.chunkSize,lodCeiling:LOD_CEILING}})
+      .then(({pid})=>log.add('info','conversion.childSpawned',{pid}))
       .catch(fail);
   }catch(e){fail(e);}
   try{await completion.promise;}finally{signal.removeEventListener('abort',cancel);clearTimeout(bootTimeout);clearInterval(timer);}

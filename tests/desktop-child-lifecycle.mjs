@@ -22,7 +22,9 @@ for (const mode of ['cancel-next', 'quit', 'renderer-crash']) {
     await app.evaluate(({ dialog }) => { dialog.showErrorBox = () => {}; dialog.showMessageBoxSync = () => 1; });
     const start = id => page.evaluate(async ({ id, foreground }) => {
       const token = await window.portableDesktop.begin(id);
-      const result = await window.portableDesktop.runConversion({ token, id, name: id, foreground, options: { cellSize: 0.1, chunkSize: 65536, sh: 'sh0', scale: 1, rotation: [0, 0, 0], opacity: 0.1 } });
+      // lodCeiling is required by the child; without it the conversion dies immediately and this test
+      // would still pass while no longer exercising a real child process.
+      const result = await window.portableDesktop.runConversion({ token, id, name: id, foreground, options: { cellSize: 0.1, chunkSize: 65536, sh: 'sh0', scale: 1, rotation: [0, 0, 0], opacity: 0.1, lodCeiling: 9000000 } });
       return { token, pid: result.pid };
     }, { id, foreground: resolve('test-results/fixtures/render.ply') });
     const first = await start('scene-first');

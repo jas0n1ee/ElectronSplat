@@ -74,7 +74,7 @@ try {
   const staged=snapshot.logs.filter(e=>e.event==='child.level.staged').map(e=>e.data.points);
   assert.deepEqual([foreground,...staged],[8192,4096,2048],'decimated level counts');
   // `filenames` comes back in traversal order: the writer pushes each unit the first time it meets it
-  // and never sorts (vendor/splat-transform/write-lod.ts:717), which is not the order `counts` uses.
+  // and never sorts, which is not the order `counts` uses.
   // No consumer reads it positionally -- src/manifest.ts and desktop/library.cjs resolve through
   // lod.file -- so compare the set it is, not the order it happens to arrive in. macOS stably produces
   // 0_0,2_0,1_0 where Linux produces 0_0,1_0,2_0, which is what made this assert look like a failure.
@@ -173,6 +173,7 @@ try {
   await page.getByRole('button',{name:'永久删除场景：官方 LOD 验证',exact:true}).click();
   await expect(page.locator('.scene-card')).toHaveCount(0);assert.ok(!(await readdir(join(root,'scenes'))).includes(manifest.id));
   assert.ok((await readdir(join(root,'scenes'))).includes(legacy));
+  assert.ok(!(await readdir(root)).includes('logs'), 'the app must not create a persistent debug log directory');
   result.checks.push('per-scene file manager path; deletion dialog names scene and directory; cancel preserves files; confirm permanently removes only selected scene');
   assert.deepEqual(result.errors,[]);assert.deepEqual(result.network,[]);result.passed=true;
 } catch(e){result.failure=e.stack;if(app)try{result.failureDiagnostics=await (await app.firstWindow()).evaluate(()=>window.portableDiagnostics.snapshot());}catch{}throw e;}

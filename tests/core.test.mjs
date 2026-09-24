@@ -24,7 +24,8 @@ test('manifest rejects legacy scenes and validates official stream/resource reco
 const {displayRotation,rotatePoint,rotateBounds,DISPLAY_ROTATION}=await import(pathToFileURL(`${dir}/coordinates.mjs`));
 const {moveDelta}=await import(pathToFileURL(`${dir}/movement.mjs`));
 const {spawnPose}=await import(pathToFileURL(`${dir}/types.mjs`));
-const {DESKTOP_LOD_BUDGETS}=await import(pathToFileURL(`${dir}/lod.mjs`));
+const {DESKTOP_LOD_BUDGETS,LOD_CEILING,lodBudgetVerdict}=await import(pathToFileURL(`${dir}/lod.mjs`));
+const {MIN_LOD_LEVELS,MAX_LOD_LEVELS,DEFAULT_LOD_CEILING,coarsestAt,planLodLevels}=await import('../desktop/lod-levels.mjs');
 const close3=(actual,expected)=>actual.forEach((v,i)=>assert.ok(Math.abs(v-expected[i])<1e-9,`${actual} != ${expected}`));
 test('Z-up eye height and legacy SOG/voxel coordinates agree without translating or double rotating',()=>{
   close3(rotatePoint(displayRotation([0,0,0]),[2,3,1.4]),[-2,1.4,3]);
@@ -39,6 +40,32 @@ test('Z-up eye height and legacy SOG/voxel coordinates agree without translating
 });
 test('desktop LOD budgets remain unchanged',()=>{
   assert.deepEqual(DESKTOP_LOD_BUDGETS,[3e6,4.5e6,6e6,9e6]);
+});
+test('LOD level planning keeps the coarsest level strictly below the ceiling',()=>{
+  // 36M is the boundary: three levels land exactly on the 9M ceiling, and the allocator pins a scene
+  // at `coarsest >= budget`, so equality still needs a fourth level. One level fewer must not have fit,
+  // otherwise the plan is wasting a level.
+  assert.equal(coarsestAt(36_000_000,3),LOD_CEILING);
+  for(const [points,levels] of [[8_192,3],[10_518_152,3],[28_555_477,3],[36_000_000,4],[41_845_254,4],[100_000_000,5]]){
+    assert.equal(planLodLevels(points,LOD_CEILING),levels,`${points} points`);
+    assert.ok(coarsestAt(points,levels)<LOD_CEILING,`${points}: coarsest level must be below the ceiling`);
+    if(levels>MIN_LOD_LEVELS)assert.ok(coarsestAt(points,levels-1)>=LOD_CEILING,`${points}: one level fewer would have fitted`);
+  }
+  // The Node half (desktop/lod-levels.mjs) and the viewer half (src/lod.ts) each own a copy of this
+  // number, because a plain Node child cannot import src/*.ts. Pin them together here.
+  assert.equal(DEFAULT_LOD_CEILING,LOD_CEILING);
+  assert.equal(planLodLevels(1e13,LOD_CEILING),MAX_LOD_LEVELS);
+});
+test('LOD budget verdict separates a preset that is coarse by design from a scene that cannot improve',()=>{
+  const at=(coarsest,budget)=>lodBudgetVerdict({coarsest,budget,ceiling:LOD_CEILING,budgets:DESKTOP_LOD_BUDGETS});
+  assert.deepEqual(at(0,3e6),{pinned:false,advice:'ok',coarsest:0,budget:3e6,ceiling:LOD_CEILING,detailedFrom:-1});
+  const coarse=at(5_230_657,3e6);
+  assert.equal(coarse.pinned,true);assert.equal(coarse.advice,'expected');assert.equal(coarse.detailedFrom,2);
+  const upgrading=at(5_230_657,9e6);
+  assert.equal(upgrading.pinned,false);assert.equal(upgrading.advice,'ok');assert.equal(upgrading.detailedFrom,2);
+  // The scene a three-level chain produced from 0907A: no preset can ever upgrade it.
+  const legacy=at(10_461_314,9e6);
+  assert.equal(legacy.pinned,true);assert.equal(legacy.advice,'reconvert');assert.equal(legacy.detailedFrom,-1);
 });
 
 test('movement never gains altitude from pitch',()=>{

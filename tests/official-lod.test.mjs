@@ -10,9 +10,9 @@ import { baseNames } from './fixtures.mjs';
 import { Quat } from 'playcanvas';
 logger.setVerbosity('quiet');
 const table=(count,transform=Transform.PLY)=>new DataTable(baseNames.map((name,col)=>new Column(name,Float32Array.from({length:count},(_,i)=>[i%16/10,Math.floor(i/16)/10,0,.2,.3,.4,2,-3,-3,-3,1,0,0,0][col]))),transform);
-async function encode(workers,transform=Transform.PLY) {
+async function encode(workers,transform=Transform.PLY,counts=[128,64,32]) {
   WorkerQueue.maxWorkers=workers;
-  const source=stackLods([128,64,32].map(n=>dataTableToChunkSource(table(n,transform),128))),fs=new MemoryFileSystem();
+  const source=stackLods(counts.map(n=>dataTableToChunkSource(table(n,transform),128))),fs=new MemoryFileSystem();
   try {await writeLodSource({filename:'/lod/lod-meta.json',mainSource:source,envSource:null,iterations:4,chunkCount:512,chunkExtent:16},fs);return fs.results;}
   finally {await source.close();await WorkerQueue.destroy();}
 }
@@ -22,6 +22,15 @@ test('official parallel SOG writer preserves inline output bytes and structural 
   for(const [file,bytes] of inline)assert.deepEqual(parallel.get(file),bytes,file);
   const meta=JSON.parse(new TextDecoder().decode(parallel.get('/lod/lod-meta.json')));
   assert.deepEqual(meta.counts,[128,64,32]);assert.equal(meta.lodLevels,3);
+});
+test('official writer carries a five-level chain, not just the old three',async()=>{
+  // The conversion pipeline now plans levels from the ceiling, so the writer has to accept any chain
+  // length the plan produces (3..16). Five is the answer for a 100M-point scene.
+  const counts=[256,128,64,32,16],files=await encode(0,Transform.PLY,counts);
+  const meta=JSON.parse(new TextDecoder().decode(files.get('/lod/lod-meta.json')));
+  assert.deepEqual(meta.counts,counts);assert.equal(meta.lodLevels,5);
+  // `filenames` is discovery order, not level order, so compare it as a set.
+  assert.deepEqual([...meta.filenames].sort(),['0_0/meta.json','1_0/meta.json','2_0/meta.json','3_0/meta.json','4_0/meta.json']);
 });
 test('official default directory and index validation reject unsafe paths and invalid offsets',async()=>{
   const dir=await mkdtemp(join(tmpdir(),'portable-lod-'));
@@ -62,4 +71,4 @@ test('streaming readPly with declared display transform matches byte for byte',a
   } finally {await WorkerQueue.destroy();}
 });
 
-// fix branch: consistency of StreamWorkFileSystem chunked append writes + WorkFileSystem read-back.
+// Check consistency of StreamWorkFileSystem chunked append writes + WorkFileSystem read-back.

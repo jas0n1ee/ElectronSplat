@@ -6,7 +6,6 @@ const { pathToFileURL } = require('node:url');
 const { Library } = require('./library.cjs');
 const { safePath } = require('./manifest.cjs');
 const { desktopPaths } = require('./paths.cjs');
-const { FileLog } = require('./filelog.cjs');
 const { ConversionProcess } = require('./conversion-process.cjs');
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'portable', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }]);
@@ -19,8 +18,6 @@ const { dataRoot, sceneDataRoot, legacySceneDataRoots } = desktopPaths({
 app.setPath('userData', path.join(dataRoot, '.portable-profile'));
 app.setPath('sessionData', path.join(dataRoot, '.portable-profile'));
 const library = new Library(sceneDataRoot, legacySceneDataRoots);
-// fix branch only: diagnostic logs that land on disk in real time, see filelog.cjs.
-const fileLog = new FileLog(path.join(dataRoot, 'logs'));
 const uiRoot = path.join(__dirname, '../ui');
 const assets = new Set(['index.html', 'assets/app.js', 'assets/styles.css', 'assets/app-icon.png']);
 const mime = { '.mjs':'text/javascript; charset=utf-8', '.webp':'image/webp', '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.json': 'application/json' };
@@ -38,33 +35,14 @@ let quitCleanup;
 
 app.whenReady().then(async () => {
   await library.init();
-  fileLog.write('info', 'app.start', { version: app.getVersion(), build: require('../package.json').buildId, platform: process.platform, arch: process.arch, electron: process.versions.electron, chrome: process.versions.chrome, dataRoot, sceneDataRoot, nodeRuntime });
   // A packaged build without its runtime cannot convert anything, and saying so once beats every
   // conversion failing with a spawn error later. tests/platform-portability.mjs asserts the runtime
   // is present, so reaching this means the install itself is damaged.
   if (app.isPackaged && !require('node:fs').existsSync(nodeRuntime)) {
-    fileLog.write('error', 'app.nodeRuntimeMissing', { nodeRuntime });
     dialog.showErrorBox('ElectronSplat 缺少转换运行时', `内置的 Node 运行时未找到：\n${nodeRuntime}\n\n安装包不完整，请重新解压或重新安装。`);
     app.exit(1);
     return;
   }
-  app.on('gpu-process-crashed', (_event, killed) => fileLog.write('error', 'gpu.processCrashed', { killed }));
-  app.on('child-process-gone', (_event, details) => fileLog.write('error', 'childProcess.gone', details));
-  app.on('window-all-closed', () => fileLog.write('info', 'app.windowAllClosed'));
-  app.on('before-quit', () => fileLog.write('info', 'app.beforeQuit'));
-  ipcMain.on('portable:log', (event, entry) => {
-    if (event.sender !== window?.webContents || event.senderFrame !== window.webContents.mainFrame || !event.senderFrame.url.startsWith('portable://app/index.html')) return;
-    if (!entry || typeof entry !== 'object') return;
-    fileLog.write(entry.level, entry.event, entry.data);
-  });
-  // 10-second memory sampling. freemem next to the per-process figures is what made the original OOM readable:
-  // the system had 121 GB free while the renderer climbed past 10 GB, so it was never a system-memory problem.
-  setInterval(() => {
-    fileLog.write('info', 'system.memory', {
-      freeMB: Math.round(os.freemem() / 1048576), totalMB: Math.round(os.totalmem() / 1048576),
-      processes: app.getAppMetrics().map(m => ({ type: m.type, pid: m.pid, workingSetMB: Math.round((m.memory?.workingSetSize ?? 0) / 1024), privateMB: Math.round((m.memory?.privateBytes ?? 0) / 1024) }))
-    });
-  }, 10000).unref();
   protocol.handle('portable', async request => {
     try {
       const url = new URL(request.url);
@@ -94,7 +72,7 @@ app.whenReady().then(async () => {
   });
   handle('queue-length', count => { if (!Number.isSafeInteger(count) || count < 0 || count > 100000) throw new Error('无效的队列长度。'); queueLength = count; }, false);
   handle('scan', () => library.scan());
-  handle('info', () => ({ version: app.getVersion(), build:require('../package.json').buildId, platform: process.platform, arch: process.arch, electron: process.versions.electron, chrome: process.versions.chrome, scenesDirectory: library.root, sceneScanDirectories: library.scanRoots, gpu: app.getGPUFeatureStatus(), diskActivity:library.activity(), logFile: fileLog.path }), false);
+  handle('info', () => ({ version: app.getVersion(), build:require('../package.json').buildId, platform: process.platform, arch: process.arch, electron: process.versions.electron, chrome: process.versions.chrome, scenesDirectory: library.root, sceneScanDirectories: library.scanRoots, gpu: app.getGPUFeatureStatus(), diskActivity:library.activity() }), false);
   // Opening the OS file manager may remain pending; it must never hold the disk transaction queue.
   handle('open-scene-folder', async token => { const dir = await library.run(() => library.sceneDirectory(token), 'scene-directory'); const error = await shell.openPath(dir); if (error) throw new Error(error); }, false);
   handle('rename-scene', (token, name) => library.renameScene(token, name));
@@ -121,12 +99,10 @@ app.whenReady().then(async () => {
     window.webContents.on('render-process-gone', (_event, details) => {
       queueLength = 0;
       console.error('[portable.renderer]', details);
-      fileLog.write('error', 'render.processGone', details);
-      void library.run(async () => { await conversion.stop(); await library.abort(); }).catch(error => fileLog.write('error', 'conversion.cleanupFailed', { message: error.message }));
+      void library.run(async () => { await conversion.stop(); await library.abort(); }).catch(error => console.error('[portable.cleanup]', error));
       dialog.showErrorBox('ElectronSplat 页面异常退出', '未完成的转换已取消。请重新打开应用，完整保存的场景仍在 scenes 文件夹中。');
     });
     window.once('ready-to-show', () => window.show());
-    fileLog.write('info', 'gpu.featureStatus', app.getGPUFeatureStatus());
     window.on('close', event => {
       if (!library.transaction && !queueLength && !conversion.active) return;
       const choice = dialog.showMessageBoxSync(window, { type: 'question', buttons: ['继续转换', '取消任务并退出'], defaultId: 0, cancelId: 0, message: '转换队列尚未完成，是否退出？', detail: `尚有 ${Math.max(queueLength, library.transaction ? 1 : 0)} 个任务。退出将取消当前转换并清空等待队列，已完成的场景会保留。` });
@@ -148,12 +124,11 @@ app.whenReady().then(async () => {
     if (quitting || quitCleanup) throw new Error('应用正在退出，无法启动转换。');
     if (!payload || typeof payload !== 'object') throw new Error('转换参数无效。');
     const tx = library.tx(payload.token); // rejects a token that is not the live transaction
-    const childLog = path.join(dataRoot, 'logs', `convert-child-${Date.now()}.jsonl`);
     const sender = window.webContents;
     const toRenderer = message => {
       if (sender.isDestroyed() || sender !== window?.webContents) return;
       try { sender.send('portable:conversion-event', message); }
-      catch (error) { fileLog.write('warn', 'child.deliveryFailed', { message: error.message }); }
+      catch (error) { console.error('[portable.child.delivery]', error); }
     };
     const child = conversion.start(nodeRuntime, ['--max-old-space-size=24576', childEntry()], {
       // Deliberately not the staging directory. On Windows a process's current directory is an open
@@ -161,20 +136,17 @@ app.whenReady().then(async () => {
       // writer's derived paths resolve against cwd wherever it is, and the child maps them back
       // into staging, so the working directory does not need to be there.
       cwd: os.tmpdir(),
-      env: { ...process.env, PORTABLE_CHILD_LOG: childLog },
       stdio: ['pipe', 'pipe', 'pipe', 'ipc']
     }, payload.token, {
       onMessage: toRenderer,
-      onOutput: (level, data) => fileLog.write(level, level === 'warn' ? 'child.stderr' : 'child.stdout', String(data).slice(0, 2000)),
-      onError: error => { fileLog.write('error', 'child.spawnError', { message: error.message }); toRenderer({ type: 'error', message: `无法启动转换进程：${error.message}` }); },
+      onOutput: (level, data) => { if (level === 'warn') console.error('[portable.child]', String(data).slice(0, 2000)); },
+      onError: error => { toRenderer({ type: 'error', message: `无法启动转换进程：${error.message}` }); },
       onClose: (code, signal, cancelled) => {
-        fileLog.write('info', 'child.exit', { code, signal, childLog, cancelled });
         if (!cancelled) toRenderer({ type: 'exit', code, signal });
       }
     });
-    fileLog.write('info', 'child.spawned', { pid: child.pid, nodeRuntime, childLog, dir: tx.dir });
     child.stdin.end(JSON.stringify({ ...payload, dir: tx.dir }));
-    return { childLog, pid: child.pid };
+    return { pid: child.pid };
   }, false);
   handle('cancel-child', async token => { await conversion.stop(token); return true; }, false);
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
@@ -188,5 +160,5 @@ app.on('before-quit', event => {
   // The window close handler owns the user's choice; only clean after it closes.
   if (BrowserWindow.getAllWindows().length) { window.close(); return; }
   quitCleanup = library.run(async () => { await conversion.stop(); await library.abort(); });
-  void quitCleanup.catch(error => fileLog.write('error', 'conversion.cleanupFailed', { message: error.message })).finally(() => { quitting = true; app.quit(); });
+  void quitCleanup.catch(error => console.error('[portable.cleanup]', error)).finally(() => { quitting = true; app.quit(); });
 });

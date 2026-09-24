@@ -14,10 +14,10 @@ An offline desktop viewer and converter for 3D Gaussian Splatting, built with El
 ## Platforms
 
 - Windows x64 and macOS 13+ on Apple silicon (arm64).
-- Linux x64 can be built from source; no Linux binary is currently distributed.
+- Linux x64 can be built from source; no Linux download is provided yet.
 - Intel Macs are not supported.
 
-Conversion runs in a bundled Node process and requires a GPU supported by Dawn (D3D12, Metal, or Vulkan). Viewing uses WebGPU with a WebGL2 fallback. The application interface is in Simplified Chinese.
+Conversion runs in a bundled Node process and requires a GPU supported by Dawn (D3D12, Metal, or Vulkan). Viewing uses WebGPU where the platform offers it and WebGL2 otherwise. On Linux it is WebGL2: Chromium does not enable its Vulkan backend there by default, so WebGPU is unavailable to the renderer. Conversion is unaffected, because it reaches Vulkan directly through Dawn instead of going through Chromium. The application interface is in Simplified Chinese.
 
 ## Download and use
 
@@ -37,7 +37,7 @@ ElectronSplat/
 └── scenes/
 ```
 
-Copy complete scene folders into `scenes/` to add them to the library. LOD budgets range from 3M to 9M splats. Conversion produces official PlayCanvas streamed LOD/SOG (SH0) and voxel collision data.
+Copy complete scene folders into `scenes/` to add them to the library. LOD budgets range from 3M to 9M splats. Conversion produces official PlayCanvas streamed LOD/SOG (SH0) and voxel collision data. It halves the splat count for each additional LOD level, targeting a coarsest level below 9M splats, with a minimum of three and a maximum of 16 levels. The level count is recorded in the scene.
 
 Check the signing and validation status in the notes for the release you download. Windows builds are currently unsigned.
 
@@ -78,7 +78,7 @@ ZIPs are written to `desktop-transfer/`. Scene data and generated builds are not
 
 ## Issues and contributions
 
-Report bugs and suggest improvements through [GitHub Issues](https://github.com/jas0n1ee/ElectronSplat/issues). For a bug report, include the app version, operating system, GPU, reproduction steps, and relevant diagnostic logs. Remove private paths and scene data before sharing.
+Report bugs and suggest improvements through [GitHub Issues](https://github.com/jas0n1ee/ElectronSplat/issues). For a bug report, include the app version, operating system, GPU, reproduction steps, and, if useful, a diagnostic JSON exported from the app. Review the export for private paths and scene data before sharing.
 
 For substantial changes, open an issue to discuss the approach first. Keep pull requests focused and run `npm run check` and `npm test`. Update both READMEs when changing user-facing documentation.
 

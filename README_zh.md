@@ -14,10 +14,10 @@
 ## 平台
 
 - Windows x64、macOS 13+ 的 Apple silicon（arm64）设备。
-- Linux x64 可从源码构建，目前不提供 Linux 二进制下载。
+- Linux x64 可从源码构建；目前没有 Linux 下载包。
 - 不支持 Intel Mac。
 
-转换在内置 Node 进程中执行，需要 Dawn 支持的 GPU（D3D12、Metal 或 Vulkan）。场景查看使用 WebGPU，并可回退至 WebGL2。应用界面为简体中文。
+转换在内置 Node 进程中执行，需要 Dawn 支持的 GPU（D3D12、Metal 或 Vulkan）。场景查看在平台提供 WebGPU 时使用 WebGPU，否则使用 WebGL2。Linux 上固定为 WebGL2：Chromium 在 Linux 默认不启用 Vulkan 后端，renderer 拿不到 WebGPU。转换不受影响 —— 它经 Dawn 直接访问 Vulkan，不经过 Chromium。应用界面为简体中文。
 
 ## 下载与使用
 
@@ -37,7 +37,7 @@ ElectronSplat/
 └── scenes/
 ```
 
-将完整场景文件夹复制到 `scenes/` 即可加入场景库。LOD budget 为 300 万至 900 万 splats。转换生成 PlayCanvas 官方 streamed LOD/SOG（SH0）和 voxel collision 数据。
+将完整场景文件夹复制到 `scenes/` 即可加入场景库。LOD budget 为 300 万至 900 万 splats。转换生成 PlayCanvas 官方 streamed LOD/SOG（SH0）和 voxel collision 数据；每增加一层，点数减半，目标是让最粗层低于 900 万 splats。层数至少 3 层、最多 16 层，并记录在场景里。
 
 安装前请查看所下载版本的 Release Notes，确认其签名与验证状态。Windows 包目前未签名。
 
@@ -78,7 +78,7 @@ ZIP 输出到 `desktop-transfer/`。场景数据和构建产物不提交到 Git�
 
 ## 问题反馈与贡献
 
-通过 [GitHub Issues](https://github.com/jas0n1ee/ElectronSplat/issues) 报告问题或提出改进建议。报告 bug 时请提供应用版本、操作系统、GPU、复现步骤和相关 diagnostic logs；分享前移除私有路径和场景数据。
+通过 [GitHub Issues](https://github.com/jas0n1ee/ElectronSplat/issues) 报告问题或提出改进建议。报告 bug 时请提供应用版本、操作系统、GPU、复现步骤；如有帮助，可在应用内手动导出诊断 JSON。分享前请检查并移除私有路径和场景数据。
 
 较大的改动请先开 issue 讨论方案。Pull request 应聚焦具体问题，并运行 `npm run check` 和 `npm test`。修改用户文档时，请同步更新两个 README。
 

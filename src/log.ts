@@ -25,8 +25,6 @@ export class Diagnostics {
     if (this.entries.length>800) this.entries.splice(0,this.entries.length-800);
     console[level === 'info' ? 'info' : level](`[ElectronSplat] ${event}`,entry.data ?? '');
     window.dispatchEvent(new CustomEvent('diagnostic',{detail:entry}));
-    // fix branch only: forwarded synchronously to the main process for real-time disk writes, so a hang leaves the last stage on disk.
-    try { window.portableDesktop?.logLine?.(entry); } catch {}
   }
   blob(context?:unknown): Blob { return new Blob([JSON.stringify({app:'electronsplat',version:APP_VERSION,build:APP_BUILD,exportedAt:new Date().toISOString(),capabilities:this.capabilities,entries:this.entries,context},null,2)],{type:'application/json'}); }
 }
